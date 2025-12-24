@@ -1,95 +1,137 @@
 import { useState } from "react";
+import * as XLSX from "xlsx";
 
-function parseCSV(text) {
-  // Minimal CSV parser for MVP
-  // Expected headers: merchant,amount (case-insensitive)
-  // Example:
-  // merchant,amount
-  // Amazon,12.34
-  // Target,50
+// CSV parser for MVP (merchant,amount; header optional)
+function parseCsv(text) {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
 
-  if (lines.length < 2) throw new Error("CSV has no data rows");
+  if (!lines.length) return [];
 
-  const headers = lines[0]
-    .split(",")
-    .map((h) => h.trim().toLowerCase());
+  const first = lines[0].toLowerCase();
+  const hasHeader = first.includes("merchant") && first.includes("amount");
+  const start = hasHeader ? 1 : 0;
 
-  const merchantIdx = headers.indexOf("merchant");
-  const amountIdx = headers.indexOf("amount");
+  const out = [];
+  for (let i = start; i < lines.length; i++) {
+    const cols = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+    const merchantRaw = (cols[0] || "").replace(/^"|"$/g, "");
+    const amountRaw = (cols[1] || "").replace(/^"|"$/g, "");
 
-  if (merchantIdx === -1 || amountIdx === -1) {
-    throw new Error('CSV must have headers "merchant" and "amount"');
-  }
-
-  const items = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim());
-
-    const merchant = cols[merchantIdx]?.replace(/^"|"$/g, "") || "Unknown";
-    const amountRaw = cols[amountIdx]?.replace(/^"|"$/g, "") || "0";
+    const merchant = merchantRaw.trim();
     const amount = Number(amountRaw);
 
+    if (!merchant) continue;
     if (!Number.isFinite(amount)) continue;
 
-    items.push({ merchant, amount });
+    out.push({ merchant, amount });
   }
+  return out;
+}
 
-  return items;
+function normalizeTxArray(arr) {
+  return (Array.isArray(arr) ? arr : [])
+    .map((x) => ({
+      merchant: String(x.merchant ?? x.Merchant ?? x.merchant_name ?? "").trim(),
+      amount: Number(x.amount ?? x.Amount ?? x.amt ?? x.value)
+    }))
+    .filter((x) => x.merchant && Number.isFinite(x.amount));
+}
+
+function parseXlsx(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: "array" });
+  const firstSheetName = wb.SheetNames[0];
+  const sheet = wb.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+  // Expect columns named merchant/amount (case-insensitive),
+  // but we also try common variants.
+  const normalized = rows.map((r) => ({
+    merchant:
+      (r.merchant ??
+        r.Merchant ??
+        r.MERCHANT ??
+        r["merchant name"] ??
+        r["Merchant Name"] ??
+        r["MERCHANT NAME"] ??
+        "").toString().trim(),
+    amount: Number(
+      r.amount ??
+        r.Amount ??
+        r.AMOUNT ??
+        r["transaction amount"] ??
+        r["Transaction Amount"] ??
+        r["TRANSACTION AMOUNT"] ??
+        r.value ??
+        r.Value ??
+        r.VALUE
+    )
+  }));
+
+  return normalizeTxArray(normalized);
 }
 
 export default function TransactionUploader({ onUpload }) {
   const [file, setFile] = useState(null);
+  const [status, setStatus] = useState("");
+
+  const handleFileChange = (e) => {
+    setFile(e.target.files?.[0] || null);
+    setStatus("");
+  };
 
   const handleUpload = () => {
-    if (!file) return alert("Choose a .json or .csv file first");
+    if (!file) {
+      setStatus("Please choose a file first.");
+      return;
+    }
 
-    const name = (file.name || "").toLowerCase();
-    const isJson = name.endsWith(".json");
-    const isCsv = name.endsWith(".csv");
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
 
-    if (!isJson && !isCsv) {
-      alert("Please upload a .json or .csv file");
+    if (ext === "xlsx") {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buf = e.target.result;
+          const txs = parseXlsx(buf);
+          onUpload(txs);
+          setStatus(`Uploaded ${txs.length} transactions from Excel.`);
+        } catch (err) {
+          console.error(err);
+          setStatus("Excel upload failed. Make sure columns include merchant + amount.");
+        }
+      };
+      reader.readAsArrayBuffer(file);
       return;
     }
 
     const reader = new FileReader();
-
     reader.onload = (e) => {
       try {
-        const text = e.target.result;
+        const raw = e.target.result;
 
-        let data;
-        if (isJson) {
-          data = JSON.parse(text);
-          if (!Array.isArray(data)) {
-            alert("JSON must be an array of transactions");
-            return;
-          }
-          // normalize
-          data = data.map((tx) => ({
-            merchant: (tx.merchant ?? "Unknown").toString(),
-            amount: Number(tx.amount) || 0
-          }));
-        } else {
-          // CSV
-          data = parseCSV(text);
-        }
-
-        if (!data.length) {
-          alert("No valid transactions found in file");
+        let data = [];
+        if (ext === "json") {
+          data = JSON.parse(raw);
+          const txs = normalizeTxArray(data);
+          onUpload(txs);
+          setStatus(`Uploaded ${txs.length} transactions from JSON.`);
           return;
         }
 
-        onUpload(data);
-        alert(`Loaded ${data.length} transactions!`);
+        if (ext === "csv") {
+          const txs = normalizeTxArray(parseCsv(raw));
+          onUpload(txs);
+          setStatus(`Uploaded ${txs.length} transactions from CSV.`);
+          return;
+        }
+
+        setStatus("Unsupported file type. Use .json, .csv, or .xlsx");
       } catch (err) {
         console.error(err);
-        alert(err.message || "Could not parse file");
+        setStatus("Upload failed: file format not valid.");
       }
     };
 
@@ -97,35 +139,22 @@ export default function TransactionUploader({ onUpload }) {
   };
 
   return (
-    <div style={{ marginTop: "1rem" }}>
-      <h3>Upload Transactions</h3>
-
-      <input
-        type="file"
-        accept=".json,.csv,application/json,text/csv"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
-      />
-
-      <button onClick={handleUpload} style={{ marginLeft: "1rem" }}>
+    <div>
+      <input type="file" accept=".json,.csv,.xlsx" onChange={handleFileChange} />
+      <button onClick={handleUpload} style={{ marginLeft: "0.5rem" }}>
         Upload
       </button>
 
-      <div style={{ fontSize: "0.9rem", marginTop: "0.75rem" }}>
-        <p><b>JSON format</b> (array):</p>
-        <pre style={{ background: "#f4f4f4", padding: "0.5rem" }}>
-{`[
-  { "merchant": "Amazon", "amount": 12.34 },
-  { "merchant": "Target", "amount": 50.00 }
-]`}
-        </pre>
+      <p style={{ fontSize: "0.9rem" }}>
+        Accepted: <b>.json</b> (array of {"{merchant, amount}"}), <b>.csv</b> (merchant,amount),
+        or <b>.xlsx</b> (first sheet with merchant/amount columns).
+      </p>
 
-        <p><b>CSV format</b> (with headers):</p>
-        <pre style={{ background: "#f4f4f4", padding: "0.5rem" }}>
-{`merchant,amount
-Amazon,12.34
-Target,50.00`}
-        </pre>
-      </div>
+      {status ? (
+        <p style={{ fontSize: "0.9rem" }}>
+          <b>{status}</b>
+        </p>
+      ) : null}
     </div>
   );
 }
