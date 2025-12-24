@@ -1,0 +1,27 @@
+import { useEffect, useState } from "react";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { auth } from "./firebase";
+import Login from "./pages/Login";
+
+function App() {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return unsubscribe;
+  }, []);
+
+  if (!user) return <Login />;
+
+  return (
+    <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
+      <h1>Sphere MVP</h1>
+      <p>Logged in as: {user.email}</p>
+      <button onClick={() => signOut(auth)}>Log Out</button>
+    </div>
+  );
+}
+
+export default App;
