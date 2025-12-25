@@ -32,28 +32,82 @@ const sectorEtfs = [
   { ticker: "XLRE", name: "Real Estate" }
 ];
 
+// What MarketPulse can convert into tickers (MVP universe)
 const sectorUniverse = {
-  "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW"],
-  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS"],
+  "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW", "SBUX", "NKE"],
+  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS", "LLY", "AMGN"],
   Restaurants: ["MCD", "SBUX", "CMG", "YUM", "DPZ"],
   Transportation: ["UBER", "FDX", "UPS", "DAL", "LUV"],
   Energy: ["XOM", "CVX", "COP", "SLB", "PSX"],
-  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO"],
+  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO", "AMD", "ORCL"],
   "Media & Entertainment": ["NFLX", "DIS", "WBD", "SPOT"],
-  Financials: ["JPM", "BAC", "GS", "MS", "C"],
+  Financials: ["JPM", "BAC", "GS", "MS", "C", "V", "MA", "AXP"],
   Industrials: ["CAT", "GE", "HON", "DE", "MMM"]
 };
 
-export default function MarketPulse({ topSpendSectors }) {
+// Map “whatever MonthlyDrip calls it” -> our MVP buckets above.
+// Add synonyms here without touching MonthlyDrip.
+const normalizeSectorToBucket = (labelRaw) => {
+  const s = String(labelRaw || "").trim().toLowerCase();
+  if (!s) return null;
+
+  // direct matches (case-insensitive)
+  const direct = Object.keys(sectorUniverse).find((k) => k.toLowerCase() === s);
+  if (direct) return direct;
+
+  // common finance labels
+  if (s.includes("tech")) return "Technology";
+  if (s.includes("health")) return "Healthcare";
+  if (s.includes("financial")) return "Financials";
+  if (s.includes("energy")) return "Energy";
+  if (s.includes("industrial")) return "Industrials";
+
+  // consumer categories / retail
+  if (s.includes("consumer")) return "Consumer & Retail";
+  if (s.includes("retail")) return "Consumer & Retail";
+  if (s.includes("shopping")) return "Consumer & Retail";
+  if (s.includes("ecommerce")) return "Consumer & Retail";
+  if (s.includes("discretionary")) return "Consumer & Retail";
+  if (s.includes("staples")) return "Consumer & Retail";
+
+  // optional: if Drip uses “Restaurants”
+  if (s.includes("restaurant") || s.includes("dining") || s.includes("food")) return "Restaurants";
+
+  // media
+  if (s.includes("media") || s.includes("entertainment")) return "Media & Entertainment";
+
+  // transport
+  if (s.includes("transport") || s.includes("travel") || s.includes("airline") || s.includes("delivery"))
+    return "Transportation";
+
+  // unknown
+  return null;
+};
+
+export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableTickers }) {
   const [sectorLeaders, setSectorLeaders] = useState([]);
   const [tickerLeaders, setTickerLeaders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dataSourceNote, setDataSourceNote] = useState("");
 
-  const spendSectors = useMemo(
-    () => (topSpendSectors || []).slice(0, 5),
-    [topSpendSectors]
-  );
+  // Accept either:
+  // - ["Technology", "Healthcare"]
+  // - [{sector:"Technology"}, ...]
+  const spendSectorsRaw = useMemo(() => {
+    const arr = Array.isArray(topSpendSectors) ? topSpendSectors : [];
+    return arr.slice(0, 5).map((x) => {
+      if (typeof x === "string") return x;
+      if (x && typeof x === "object") return x.sector || x.name || x.label || "";
+      return "";
+    });
+  }, [topSpendSectors]);
+
+  const spendBuckets = useMemo(() => {
+    const buckets = spendSectorsRaw
+      .map(normalizeSectorToBucket)
+      .filter(Boolean);
+    return uniq(buckets).slice(0, 5);
+  }, [spendSectorsRaw]);
 
   const tickerToSector = useMemo(() => {
     const map = {};
@@ -65,11 +119,17 @@ export default function MarketPulse({ topSpendSectors }) {
 
   const tickersForSpendSectors = useMemo(() => {
     const tickers = [];
-    for (const sector of spendSectors) {
-      tickers.push(...(sectorUniverse[sector] || []));
+    for (const bucket of spendBuckets) {
+      tickers.push(...(sectorUniverse[bucket] || []));
     }
     return uniq(tickers);
-  }, [spendSectors]);
+  }, [spendBuckets]);
+
+  useEffect(() => {
+    if (typeof onAvailableTickers === "function") {
+      onAvailableTickers(tickersForSpendSectors);
+    }
+  }, [tickersForSpendSectors, onAvailableTickers]);
 
   const asOf = useMemo(() => {
     const d1 = sectorLeaders.map((x) => x.latestDate).filter(Boolean);
@@ -81,6 +141,7 @@ export default function MarketPulse({ topSpendSectors }) {
     const run = async () => {
       setLoading(true);
       try {
+        // 1) Sector leader ETFs (always fetch)
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
         const etfRes = await fetch(
           `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
@@ -91,11 +152,11 @@ export default function MarketPulse({ topSpendSectors }) {
 
         const withNames = etfItems.slice(0, 5).map((x) => ({
           ...x,
-          sectorName:
-            sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
+          sectorName: sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
         }));
         setSectorLeaders(withNames);
 
+        // 2) Personal runners (only if we have tickers perceived from spend)
         if (tickersForSpendSectors.length) {
           const uniRes = await fetch(
             `/.netlify/functions/market?tickers=${encodeURIComponent(
@@ -116,7 +177,7 @@ export default function MarketPulse({ topSpendSectors }) {
         }
 
         setDataSourceNote(
-          "Returns are computed from free daily close data (Stooq) via a Netlify Function, using the most recent available trading day and the closest close at ~30 calendar days prior. Data may be delayed, adjusted differently than broker feeds, and can be affected by corporate actions. This section is informational only and is not a recommendation."
+          "Returns are computed from free daily close data via a Netlify Function, using the most recent available trading day and the closest close at ~30 calendar days prior. Data may be delayed, adjusted differently than broker feeds, and can be affected by corporate actions. Informational only; not a recommendation."
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
@@ -137,8 +198,7 @@ export default function MarketPulse({ topSpendSectors }) {
     <div style={{ marginTop: "1rem" }}>
       <h3 style={{ marginBottom: "0.25rem" }}>Market Pulse (Trailing 30 Days)</h3>
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        <b>As of:</b> {asOf || "—"} {loading ? "(Loading…)" : ""} — calculated
-        from free daily price data.
+        <b>As of:</b> {asOf || "—"} {loading ? "(Loading…)" : ""}
       </p>
 
       <h4>Top 5 Sector Leaders (30D) — ETF Proxies</h4>
@@ -154,20 +214,25 @@ export default function MarketPulse({ topSpendSectors }) {
         </ol>
       )}
 
-      <h4>Top 10 Movers (30D) — Based on Your Top Spend Sectors</h4>
+      <h4>Top 10 Runners (30D) — Based on Your Top Spend Sectors</h4>
       <p style={{ fontSize: "0.9rem" }}>
-        Your top spend sectors: <b>{spendSectors.join(", ") || "—"}</b>
+        Top Spend Sectors (Spend): <b>{spendBuckets.join(", ") || "—"}</b>
       </p>
 
       {tickerLeaders.length === 0 ? (
         <p style={{ fontSize: "0.9rem" }}>
-          No movers shown yet (upload transactions + map merchants to sectors).
+          No runners shown yet (upload transactions + ensure sector mapping produced at least one recognized sector).
         </p>
       ) : (
         <ol>
           {tickerLeaders.map((x) => (
-            <li key={x.ticker}>
+            <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
               <b>{x.sectorName}</b> — {x.ticker}: <b>{pct(x.return30d)}</b>
+              {typeof onAddTicker === "function" ? (
+                <button onClick={() => onAddTicker(x.ticker)} style={{ marginLeft: 10 }}>
+                  Add to Paper Portfolio
+                </button>
+              ) : null}
             </li>
           ))}
         </ol>
@@ -175,9 +240,7 @@ export default function MarketPulse({ topSpendSectors }) {
 
       <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
         <b>Confidence note:</b>
-        <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
-          {dataSourceNote}
-        </div>
+        <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>{dataSourceNote}</div>
       </div>
     </div>
   );
