@@ -1,158 +1,145 @@
-import { useState } from "react";
-import * as XLSX from "xlsx";
+import { useMemo, useState } from "react";
 
-// CSV parser for MVP (merchant,amount; header optional)
-function parseCsv(text) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
+/**
+ * TransactionUploader (Netlify-safe)
+ * - Supports JSON + CSV only (no external deps).
+ * - XLSX intentionally removed to prevent Netlify build failures.
+ *   You can add XLSX back later once the dependency + bundling is confirmed stable.
+ */
 
-  if (!lines.length) return [];
+function toNumber(x) {
+  const n = Number(String(x ?? "").replace(/[$,]/g, "").trim());
+  return Number.isFinite(n) ? n : null;
+}
 
-  const first = lines[0].toLowerCase();
-  const hasHeader = first.includes("merchant") && first.includes("amount");
-  const start = hasHeader ? 1 : 0;
+function normalizeRecord(obj) {
+  const merchant =
+    (obj.merchant ??
+      obj.Merchant ??
+      obj.name ??
+      obj.Name ??
+      obj.description ??
+      obj.Description ??
+      "")
+      .toString()
+      .trim();
 
-  const out = [];
-  for (let i = start; i < lines.length; i++) {
-    const cols = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
-    const merchantRaw = (cols[0] || "").replace(/^"|"$/g, "");
-    const amountRaw = (cols[1] || "").replace(/^"|"$/g, "");
+  const amount = toNumber(
+    obj.amount ?? obj.Amount ?? obj.value ?? obj.Value ?? obj.amt ?? obj.Amt
+  );
 
-    const merchant = merchantRaw.trim();
-    const amount = Number(amountRaw);
+  return merchant && amount !== null ? { merchant, amount } : null;
+}
 
-    if (!merchant) continue;
-    if (!Number.isFinite(amount)) continue;
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
 
-    out.push({ merchant, amount });
+  const parseLine = (line) => {
+    const out = [];
+    let cur = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === "," && !inQuotes) {
+        out.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  };
+
+  const headers = parseLine(lines[0]).map((h) => h.toLowerCase());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseLine(lines[i]);
+    const obj = {};
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = cols[j] ?? "";
+    }
+    rows.push(obj);
   }
-  return out;
-}
 
-function normalizeTxArray(arr) {
-  return (Array.isArray(arr) ? arr : [])
-    .map((x) => ({
-      merchant: String(x.merchant ?? x.Merchant ?? x.merchant_name ?? "").trim(),
-      amount: Number(x.amount ?? x.Amount ?? x.amt ?? x.value)
-    }))
-    .filter((x) => x.merchant && Number.isFinite(x.amount));
-}
-
-function parseXlsx(arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { type: "array" });
-  const firstSheetName = wb.SheetNames[0];
-  const sheet = wb.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-  // Expect columns named merchant/amount (case-insensitive),
-  // but we also try common variants.
-  const normalized = rows.map((r) => ({
-    merchant:
-      (r.merchant ??
-        r.Merchant ??
-        r.MERCHANT ??
-        r["merchant name"] ??
-        r["Merchant Name"] ??
-        r["MERCHANT NAME"] ??
-        "").toString().trim(),
-    amount: Number(
-      r.amount ??
-        r.Amount ??
-        r.AMOUNT ??
-        r["transaction amount"] ??
-        r["Transaction Amount"] ??
-        r["TRANSACTION AMOUNT"] ??
-        r.value ??
-        r.Value ??
-        r.VALUE
-    )
-  }));
-
-  return normalizeTxArray(normalized);
+  return rows
+    .map((r) => {
+      const merchant =
+        r.merchant ?? r.name ?? r.description ?? r["merchant name"] ?? r["transaction description"];
+      const amount = r.amount ?? r.value ?? r.amt ?? r["transaction amount"];
+      return normalizeRecord({ merchant, amount });
+    })
+    .filter(Boolean);
 }
 
 export default function TransactionUploader({ onUpload }) {
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
 
+  const accept = useMemo(() => ".json,.csv", []);
+
   const handleFileChange = (e) => {
-    setFile(e.target.files?.[0] || null);
     setStatus("");
+    setFile(e.target.files?.[0] || null);
   };
 
-  const handleUpload = () => {
-    if (!file) {
-      setStatus("Please choose a file first.");
-      return;
-    }
+  const handleUpload = async () => {
+    if (!file) return setStatus("Choose a file first.");
 
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const name = file.name.toLowerCase();
+    try {
+      setStatus("Reading file…");
 
-    if (ext === "xlsx") {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const buf = e.target.result;
-          const txs = parseXlsx(buf);
-          onUpload(txs);
-          setStatus(`Uploaded ${txs.length} transactions from Excel.`);
-        } catch (err) {
-          console.error(err);
-          setStatus("Excel upload failed. Make sure columns include merchant + amount.");
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const raw = e.target.result;
-
-        let data = [];
-        if (ext === "json") {
-          data = JSON.parse(raw);
-          const txs = normalizeTxArray(data);
-          onUpload(txs);
-          setStatus(`Uploaded ${txs.length} transactions from JSON.`);
-          return;
-        }
-
-        if (ext === "csv") {
-          const txs = normalizeTxArray(parseCsv(raw));
-          onUpload(txs);
-          setStatus(`Uploaded ${txs.length} transactions from CSV.`);
-          return;
-        }
-
-        setStatus("Unsupported file type. Use .json, .csv, or .xlsx");
-      } catch (err) {
-        console.error(err);
-        setStatus("Upload failed: file format not valid.");
+      if (name.endsWith(".json")) {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const arr = Array.isArray(parsed) ? parsed : [];
+        const normalized = arr.map(normalizeRecord).filter(Boolean);
+        onUpload?.(normalized);
+        setStatus(`Uploaded ${normalized.length} rows from JSON.`);
+        return;
       }
-    };
 
-    reader.readAsText(file);
+      if (name.endsWith(".csv")) {
+        const text = await file.text();
+        const normalized = parseCSV(text);
+        onUpload?.(normalized);
+        setStatus(`Uploaded ${normalized.length} rows from CSV.`);
+        return;
+      }
+
+      setStatus("Unsupported file type. Use .json or .csv");
+    } catch (err) {
+      console.error(err);
+      setStatus(err?.message || "Upload failed.");
+    }
   };
 
   return (
-    <div>
-      <input type="file" accept=".json,.csv,.xlsx" onChange={handleFileChange} />
-      <button onClick={handleUpload} style={{ marginLeft: "0.5rem" }}>
+    <div style={{ marginTop: "1rem" }}>
+      <h3 style={{ marginBottom: "0.25rem" }}>Upload Transactions</h3>
+      <p style={{ marginTop: 0, fontSize: "0.9rem" }}>
+        Supported: <b>JSON</b>, <b>CSV</b>. (XLSX disabled for Netlify build stability.)
+      </p>
+
+      <input type="file" accept={accept} onChange={handleFileChange} />
+      <button onClick={handleUpload} style={{ marginLeft: 10 }}>
         Upload
       </button>
 
-      <p style={{ fontSize: "0.9rem" }}>
-        Accepted: <b>.json</b> (array of {"{merchant, amount}"}), <b>.csv</b> (merchant,amount),
-        or <b>.xlsx</b> (first sheet with merchant/amount columns).
-      </p>
-
       {status ? (
-        <p style={{ fontSize: "0.9rem" }}>
-          <b>{status}</b>
+        <p style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
+          <b>Status:</b> {status}
         </p>
       ) : null}
     </div>
