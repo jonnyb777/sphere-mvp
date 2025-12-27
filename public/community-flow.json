@@ -1,0 +1,34 @@
+[
+  { "ticker": "AAPL", "sector": "Technology", "signal": "High spend concentration", "count": 41 },
+  { "ticker": "MSFT", "sector": "Technology", "signal": "Stable breadth", "count": 37 },
+  { "ticker": "NVDA", "sector": "Technology", "signal": "Momentum spillover", "count": 29 },
+
+  { "ticker": "AMZN", "sector": "Consumer & Retail", "signal": "High spend concentration", "count": 35 },
+  { "ticker": "TGT", "sector": "Consumer & Retail", "signal": "Narrow breadth", "count": 27 },
+  { "ticker": "WMT", "sector": "Consumer & Retail", "signal": "Stable breadth", "count": 24 },
+  { "ticker": "COST", "sector": "Consumer & Retail", "signal": "Stable breadth", "count": 22 },
+
+  { "ticker": "UNH", "sector": "Healthcare", "signal": "High spend concentration", "count": 21 },
+  { "ticker": "JNJ", "sector": "Healthcare", "signal": "Stable breadth", "count": 19 },
+  { "ticker": "MRK", "sector": "Healthcare", "signal": "Momentum spillover", "count": 16 },
+
+  { "ticker": "JPM", "sector": "Financials", "signal": "Stable breadth", "count": 18 },
+  { "ticker": "BAC", "sector": "Financials", "signal": "Narrow breadth", "count": 14 },
+  { "ticker": "GS", "sector": "Financials", "signal": "Momentum spillover", "count": 10 },
+
+  { "ticker": "XOM", "sector": "Energy", "signal": "High spend concentration", "count": 12 },
+  { "ticker": "CVX", "sector": "Energy", "signal": "Stable breadth", "count": 11 },
+  { "ticker": "COP", "sector": "Energy", "signal": "Momentum spillover", "count": 9 },
+
+  { "ticker": "MCD", "sector": "Restaurants", "signal": "High spend concentration", "count": 16 },
+  { "ticker": "SBUX", "sector": "Restaurants", "signal": "Stable breadth", "count": 13 },
+  { "ticker": "CMG", "sector": "Restaurants", "signal": "Narrow breadth", "count": 11 },
+  { "ticker": "YUM", "sector": "Restaurants", "signal": "Momentum spillover", "count": 9 },
+
+  { "ticker": "UBER", "sector": "Transportation", "signal": "High spend concentration", "count": 13 },
+  { "ticker": "UPS", "sector": "Transportation", "signal": "Stable breadth", "count": 9 },
+  { "ticker": "FDX", "sector": "Transportation", "signal": "Narrow breadth", "count": 7 },
+
+  { "ticker": "DIS", "sector": "Media & Entertainment", "signal": "High spend concentration", "count": 8 },
+  { "ticker": "NFLX", "sector": "Media & Entertainment", "signal": "Momentum spillover", "count": 7 }
+]
