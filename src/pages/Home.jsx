@@ -5,56 +5,43 @@ import MarketPulse from "../components/MarketPulse";
 import MonthlyFlow from "../components/MonthlyFlow";
 import PaperPortfolio from "../components/PaperPortfolio";
 import AutoInvestPreview from "../components/AutoInvestPreview";
-
-function normalizeTransactions(transactions) {
-  const arr = Array.isArray(transactions) ? transactions : [];
-  return arr
-    .map((tx) => {
-      const merchant =
-        (tx.merchant ||
-          tx.Merchant ||
-          tx.name ||
-          tx.Name ||
-          tx.description ||
-          tx.Description ||
-          "")
-          .toString()
-          .trim();
-      const amountRaw =
-        tx.amount ??
-        tx.Amount ??
-        tx.value ??
-        tx.Value ??
-        tx.amt ??
-        tx.Amt ??
-        0;
-      const amount = Number(amountRaw);
-      return { merchant, amount };
-    })
-    .filter((x) => x.merchant && Number.isFinite(x.amount));
-}
+import { inferTickerFromMerchant } from "../utils/mappings";
+import { PageShell, Tabs, Card, Divider, Hint, Pill } from "../components/ui/UiKit";
 
 export default function Home({ user }) {
+  const [activeTab, setActiveTab] = useState("drip"); // drip | flow | portfolio
+
   const [transactions, setTransactions] = useState([]);
-  const [topSpendSectors, setTopSpendSectors] = useState([]); // from MonthlyDrip mapping
-  const [availableTickers, setAvailableTickers] = useState([]); // from MarketPulse (spend-sector universe)
+  const [topSpendSectors, setTopSpendSectors] = useState([]);
+
+  const [availableTickers, setAvailableTickers] = useState([]);
   const [paperTickers, setPaperTickers] = useState([]);
+  const [personalRunners, setPersonalRunners] = useState([]);
 
-  const normalized = useMemo(
-    () => normalizeTransactions(transactions),
-    [transactions]
-  );
-
+  // AutoInvestPreview needs merchant totals
   const merchantTotals = useMemo(() => {
     const map = {};
-    for (const tx of normalized || []) {
-      const m = tx.merchant;
-      const a = tx.amount;
+    for (const tx of transactions || []) {
+      const m = (tx.merchant || tx.Merchant || tx.name || tx.Name || "").toString().trim();
+      const a = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
       if (!m || !Number.isFinite(a)) continue;
       map[m] = (map[m] || 0) + a;
     }
     return map;
-  }, [normalized]);
+  }, [transactions]);
+
+  // Flow alignment uses “user spend tickers”
+  const userSpendTickers = useMemo(() => {
+    const arr = Array.isArray(transactions) ? transactions : [];
+    const set = new Set();
+    for (const tx of arr) {
+      const m = (tx.merchant || tx.Merchant || tx.name || tx.Name || "").toString().trim();
+      if (!m) continue;
+      const t = inferTickerFromMerchant(m);
+      if (t) set.add(String(t).toUpperCase().trim());
+    }
+    return Array.from(set).sort();
+  }, [transactions]);
 
   const handleAddTickerToPaper = (ticker) => {
     const t = String(ticker || "").toUpperCase().trim();
@@ -63,10 +50,7 @@ export default function Home({ user }) {
     if (amtRaw === null) return;
     const amt = Number(amtRaw);
     if (!Number.isFinite(amt) || amt <= 0) return alert("Enter a positive amount.");
-
-    window.dispatchEvent(
-      new CustomEvent("sphere:addPaper", { detail: { ticker: t, amount: amt } })
-    );
+    window.dispatchEvent(new CustomEvent("sphere:addPaper", { detail: { ticker: t, amount: amt } }));
   };
 
   const ruleTickers = useMemo(() => {
@@ -74,36 +58,96 @@ export default function Home({ user }) {
     return Array.from(all).sort();
   }, [availableTickers, paperTickers]);
 
-  return (
-    <div style={{ padding: "2rem", fontFamily: "sans-serif" }}>
-      <h2 style={{ marginTop: 0 }}>Sphere MVP</h2>
-      <p style={{ marginTop: 0, fontSize: "0.9rem" }}>
-        Logged in as: <b>{user?.email || "—"}</b>
-      </p>
+  const tabDefs = useMemo(
+    () => [
+      { value: "drip", label: "Drip" },
+      { value: "flow", label: "Flow", badge: "Paid Preview" },
+      { value: "portfolio", label: "Portfolio" }
+    ],
+    []
+  );
 
-      <p style={{ fontSize: "0.85rem", marginTop: 0 }}>
-        Informational only — no recommendations, no real trading in this MVP.
-      </p>
-
-      <TransactionUploader onUpload={setTransactions} />
-
-      <MonthlyDrip
-        transactions={transactions}
-        onTopSectorsChange={setTopSpendSectors}
-      />
-
-      <MarketPulse
-        topSpendSectors={topSpendSectors}
-        onAddTicker={handleAddTickerToPaper}
-        onAvailableTickers={setAvailableTickers}
-      />
-
-      {/* Monthly Flow must be BELOW Market Pulse (including its confidence note) and ABOVE Paper Portfolio */}
-      <MonthlyFlow dripTickers={availableTickers} dripSectors={topSpendSectors} />
-
-      <PaperPortfolio availableTickers={ruleTickers} onTickersChange={setPaperTickers} />
-
-      <AutoInvestPreview merchantTotals={merchantTotals} availableTickers={ruleTickers} />
+  const headerRight = (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <Pill>{user?.email || "—"}</Pill>
+      <Pill>Live MVP</Pill>
     </div>
+  );
+
+  return (
+    <PageShell
+      title="Sphere MVP"
+      subtitle="Turn your daily spending into smart investing — informational preview only."
+      rightSlot={headerRight}
+    >
+      <Tabs value={activeTab} onChange={setActiveTab} tabs={tabDefs} />
+
+      {/* DRIP TAB */}
+      {activeTab === "drip" ? (
+        <div>
+          {/* NOTE: Divider label is the ONE title; Card header is intentionally blank */}
+          <Divider label="Upload Transactions" />
+          <Card>
+            <TransactionUploader onUpload={setTransactions} />
+          </Card>
+
+          <Divider label="Monthly Drip" />
+          <Card>
+            <MonthlyDrip transactions={transactions} onTopSectorsChange={setTopSpendSectors} />
+          </Card>
+
+          <Divider label="Market Pulse (Trailing 30 Days)" />
+          <Card>
+            <MarketPulse
+              topSpendSectors={topSpendSectors}
+              transactions={transactions}
+              onAddTicker={handleAddTickerToPaper}
+              onAvailableTickers={setAvailableTickers}
+              onPersonalRunnersChange={setPersonalRunners}
+            />
+          </Card>
+
+          <Hint>
+            Tip: If “No runners shown yet” appears, it usually means your upload didn’t map into any recognized sector
+            bucket (or the market function didn’t return JSON). Your Merchant → Sector mapping controls this.
+          </Hint>
+        </div>
+      ) : null}
+
+      {/* FLOW TAB */}
+      {activeTab === "flow" ? (
+        <div>
+          <Divider label="Monthly Flow (Paid • Preview)" />
+          <Card>
+            <MonthlyFlow userSpendTickers={userSpendTickers} userRunners={personalRunners} />
+          </Card>
+
+          <Hint>
+            Flow runs off an admin-populated aggregate feed (not end-user uploads). In production this is automated; in
+            the MVP it’s a static JSON file.
+          </Hint>
+        </div>
+      ) : null}
+
+      {/* PORTFOLIO TAB */}
+      {activeTab === "portfolio" ? (
+        <div>
+          <Divider label="Paper Portfolio" />
+          <Card>
+            <PaperPortfolio onTickersChange={setPaperTickers} />
+          </Card>
+
+          <Divider label="Auto-Invest (Preview Only)" />
+          <Card>
+            <AutoInvestPreview merchantTotals={merchantTotals} availableTickers={ruleTickers} />
+          </Card>
+
+          <Hint>
+            This is a preview-only experience. Real execution requires bank connectivity + brokerage integration and
+            compliance controls.
+          </Hint>
+        </div>
+      ) : null}
+    </PageShell>
   );
 }

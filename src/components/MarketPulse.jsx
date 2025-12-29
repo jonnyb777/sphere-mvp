@@ -32,56 +32,16 @@ const sectorEtfs = [
   { ticker: "XLRE", name: "Real Estate" }
 ];
 
-// What MarketPulse can convert into tickers (MVP universe)
 const sectorUniverse = {
-  "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW", "SBUX", "NKE"],
-  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS", "LLY", "AMGN"],
+  "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW"],
+  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS"],
   Restaurants: ["MCD", "SBUX", "CMG", "YUM", "DPZ"],
   Transportation: ["UBER", "FDX", "UPS", "DAL", "LUV"],
   Energy: ["XOM", "CVX", "COP", "SLB", "PSX"],
-  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO", "AMD", "ORCL"],
+  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO"],
   "Media & Entertainment": ["NFLX", "DIS", "WBD", "SPOT"],
-  Financials: ["JPM", "BAC", "GS", "MS", "C", "V", "MA", "AXP"],
+  Financials: ["JPM", "BAC", "GS", "MS", "C"],
   Industrials: ["CAT", "GE", "HON", "DE", "MMM"]
-};
-
-// Map “whatever MonthlyDrip calls it” -> our MVP buckets above.
-// Add synonyms here without touching MonthlyDrip.
-const normalizeSectorToBucket = (labelRaw) => {
-  const s = String(labelRaw || "").trim().toLowerCase();
-  if (!s) return null;
-
-  // direct matches (case-insensitive)
-  const direct = Object.keys(sectorUniverse).find((k) => k.toLowerCase() === s);
-  if (direct) return direct;
-
-  // common finance labels
-  if (s.includes("tech")) return "Technology";
-  if (s.includes("health")) return "Healthcare";
-  if (s.includes("financial")) return "Financials";
-  if (s.includes("energy")) return "Energy";
-  if (s.includes("industrial")) return "Industrials";
-
-  // consumer categories / retail
-  if (s.includes("consumer")) return "Consumer & Retail";
-  if (s.includes("retail")) return "Consumer & Retail";
-  if (s.includes("shopping")) return "Consumer & Retail";
-  if (s.includes("ecommerce")) return "Consumer & Retail";
-  if (s.includes("discretionary")) return "Consumer & Retail";
-  if (s.includes("staples")) return "Consumer & Retail";
-
-  // optional: if Drip uses “Restaurants”
-  if (s.includes("restaurant") || s.includes("dining") || s.includes("food")) return "Restaurants";
-
-  // media
-  if (s.includes("media") || s.includes("entertainment")) return "Media & Entertainment";
-
-  // transport
-  if (s.includes("transport") || s.includes("travel") || s.includes("airline") || s.includes("delivery"))
-    return "Transportation";
-
-  // unknown
-  return null;
 };
 
 export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableTickers }) {
@@ -90,24 +50,10 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
   const [loading, setLoading] = useState(false);
   const [dataSourceNote, setDataSourceNote] = useState("");
 
-  // Accept either:
-  // - ["Technology", "Healthcare"]
-  // - [{sector:"Technology"}, ...]
-  const spendSectorsRaw = useMemo(() => {
-    const arr = Array.isArray(topSpendSectors) ? topSpendSectors : [];
-    return arr.slice(0, 5).map((x) => {
-      if (typeof x === "string") return x;
-      if (x && typeof x === "object") return x.sector || x.name || x.label || "";
-      return "";
-    });
-  }, [topSpendSectors]);
-
-  const spendBuckets = useMemo(() => {
-    const buckets = spendSectorsRaw
-      .map(normalizeSectorToBucket)
-      .filter(Boolean);
-    return uniq(buckets).slice(0, 5);
-  }, [spendSectorsRaw]);
+  const spendSectors = useMemo(
+    () => (topSpendSectors || []).filter(Boolean).slice(0, 5),
+    [topSpendSectors]
+  );
 
   const tickerToSector = useMemo(() => {
     const map = {};
@@ -119,11 +65,11 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
 
   const tickersForSpendSectors = useMemo(() => {
     const tickers = [];
-    for (const bucket of spendBuckets) {
-      tickers.push(...(sectorUniverse[bucket] || []));
+    for (const sector of spendSectors) {
+      tickers.push(...(sectorUniverse[sector] || []));
     }
     return uniq(tickers);
-  }, [spendBuckets]);
+  }, [spendSectors]);
 
   useEffect(() => {
     if (typeof onAvailableTickers === "function") {
@@ -141,43 +87,58 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
     const run = async () => {
       setLoading(true);
       try {
-        // 1) Sector leader ETFs (always fetch)
+        // Sector leader ETFs
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
-        const etfRes = await fetch(
-          `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
-        );
+        const etfRes = await fetch(`/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`);
         const etfJson = await etfRes.json();
         const etfItems = Array.isArray(etfJson.items) ? etfJson.items : [];
         etfItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
-
         const withNames = etfItems.slice(0, 5).map((x) => ({
           ...x,
           sectorName: sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
         }));
         setSectorLeaders(withNames);
 
-        // 2) Personal runners (only if we have tickers perceived from spend)
+        // Personal runners
         if (tickersForSpendSectors.length) {
           const uniRes = await fetch(
-            `/.netlify/functions/market?tickers=${encodeURIComponent(
-              tickersForSpendSectors.join(",")
-            )}`
+            `/.netlify/functions/market?tickers=${encodeURIComponent(tickersForSpendSectors.join(","))}`
           );
           const uniJson = await uniRes.json();
           const uniItems = Array.isArray(uniJson.items) ? uniJson.items : [];
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
-          const labeled = uniItems.slice(0, 10).map((x) => ({
+          const labeled = uniItems.map((x) => ({
             ...x,
             sectorName: tickerToSector[x.ticker] || "Other / Unmapped"
           }));
-          setTickerLeaders(labeled);
+
+          // Enforce representation: at least 1 from each spend sector if possible
+          const chosen = [];
+          const seen = new Set();
+
+          for (const s of spendSectors) {
+            const pick = labeled.find((x) => x.sectorName === s && !seen.has(x.ticker));
+            if (pick) {
+              chosen.push(pick);
+              seen.add(pick.ticker);
+            }
+          }
+
+          for (const x of labeled) {
+            if (chosen.length >= 10) break;
+            if (seen.has(x.ticker)) continue;
+            chosen.push(x);
+            seen.add(x.ticker);
+          }
+
+          setTickerLeaders(chosen.slice(0, 10));
         } else {
           setTickerLeaders([]);
         }
 
         setDataSourceNote(
-          "Returns are computed from free daily close data via a Netlify Function, using the most recent available trading day and the closest close at ~30 calendar days prior. Data may be delayed, adjusted differently than broker feeds, and can be affected by corporate actions. Informational only; not a recommendation."
+          "Returns are computed from free daily close data via a Netlify Function, using the most recent available trading day and the closest close at ~30 calendar days prior. Data may be delayed or differ from broker feeds due to corporate actions/adjustments. Informational only; not a recommendation."
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
@@ -192,7 +153,7 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
     };
 
     run();
-  }, [tickersForSpendSectors, tickerToSector]);
+  }, [tickersForSpendSectors, tickerToSector, spendSectors]);
 
   return (
     <div style={{ marginTop: "1rem" }}>
@@ -216,7 +177,7 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
 
       <h4>Top 10 Runners (30D) — Based on Your Top Spend Sectors</h4>
       <p style={{ fontSize: "0.9rem" }}>
-        Top Spend Sectors (Spend): <b>{spendBuckets.join(", ") || "—"}</b>
+        Top Spend Sectors (Spend): <b>{spendSectors.join(", ") || "—"}</b>
       </p>
 
       {tickerLeaders.length === 0 ? (
@@ -228,11 +189,6 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
           {tickerLeaders.map((x) => (
             <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
               <b>{x.sectorName}</b> — {x.ticker}: <b>{pct(x.return30d)}</b>
-              {typeof onAddTicker === "function" ? (
-                <button onClick={() => onAddTicker(x.ticker)} style={{ marginLeft: 10 }}>
-                  Add to Paper Portfolio
-                </button>
-              ) : null}
             </li>
           ))}
         </ol>

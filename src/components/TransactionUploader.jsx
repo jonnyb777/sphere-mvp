@@ -1,147 +1,150 @@
 import { useMemo, useState } from "react";
 
 /**
- * TransactionUploader (Netlify-safe)
- * - Supports JSON + CSV only (no external deps).
- * - XLSX intentionally removed to prevent Netlify build failures.
- *   You can add XLSX back later once the dependency + bundling is confirmed stable.
+ * MVP uploader:
+ * - Accepts CSV + JSON (Netlify-safe)
+ * - Provides "Download CSV template" below Choose file
+ * - No category required (mapping happens later)
  */
 
-function toNumber(x) {
-  const n = Number(String(x ?? "").replace(/[$,]/g, "").trim());
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeRecord(obj) {
-  const merchant =
-    (obj.merchant ??
-      obj.Merchant ??
-      obj.name ??
-      obj.Name ??
-      obj.description ??
-      obj.Description ??
-      "")
-      .toString()
-      .trim();
-
-  const amount = toNumber(
-    obj.amount ?? obj.Amount ?? obj.value ?? obj.Value ?? obj.amt ?? obj.Amt
-  );
-
-  return merchant && amount !== null ? { merchant, amount } : null;
-}
-
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter(Boolean);
+  // Minimal CSV parser (handles simple CSV; good enough for MVP)
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((l) => l.trim().length);
+
   if (lines.length < 2) return [];
 
-  const parseLine = (line) => {
-    const out = [];
-    let cur = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === "," && !inQuotes) {
-        out.push(cur);
-        cur = "";
-      } else {
-        cur += ch;
-      }
-    }
-    out.push(cur);
-    return out.map((s) => s.trim());
-  };
-
-  const headers = parseLine(lines[0]).map((h) => h.toLowerCase());
+  const headers = lines[0].split(",").map((h) => h.trim());
   const rows = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = parseLine(lines[i]);
+    const cols = lines[i].split(","); // MVP-simple
     const obj = {};
-    for (let j = 0; j < headers.length; j++) {
-      obj[headers[j]] = cols[j] ?? "";
-    }
+    headers.forEach((h, idx) => (obj[h] = (cols[idx] ?? "").trim()));
     rows.push(obj);
   }
+  return rows;
+}
 
-  return rows
+function normalizeAnyRows(rows) {
+  const arr = Array.isArray(rows) ? rows : [];
+  return arr
     .map((r) => {
       const merchant =
-        r.merchant ?? r.name ?? r.description ?? r["merchant name"] ?? r["transaction description"];
-      const amount = r.amount ?? r.value ?? r.amt ?? r["transaction amount"];
-      return normalizeRecord({ merchant, amount });
+        (r.merchant ||
+          r.Merchant ||
+          r.name ||
+          r.Name ||
+          r.description ||
+          r.Description ||
+          r.payee ||
+          r.Payee ||
+          "")
+          .toString()
+          .trim();
+
+      const amountRaw =
+        r.amount ??
+        r.Amount ??
+        r.value ??
+        r.Value ??
+        r.amt ??
+        r.Amt ??
+        r.debit ??
+        r.Debit ??
+        0;
+
+      const amount = Number(
+        typeof amountRaw === "string"
+          ? amountRaw.replace(/[$,]/g, "").trim()
+          : amountRaw
+      );
+
+      const date = (r.date || r.Date || r.posted || r.Posted || "")
+        .toString()
+        .trim();
+
+      const description = (r.description || r.Description || r.memo || r.Memo || "")
+        .toString()
+        .trim();
+
+      return { merchant, amount, date, description, raw: r };
     })
-    .filter(Boolean);
+    .filter((x) => x.merchant && Number.isFinite(x.amount));
 }
 
 export default function TransactionUploader({ onUpload }) {
   const [file, setFile] = useState(null);
-  const [status, setStatus] = useState("");
+  const [lastStatus, setLastStatus] = useState("");
 
-  const accept = useMemo(() => ".json,.csv", []);
+  // This file must exist at: public/templates/transactions_template.csv
+  const templateHref = useMemo(() => "/templates/transactions_template.csv", []);
 
   const handleFileChange = (e) => {
-    setStatus("");
     setFile(e.target.files?.[0] || null);
+    setLastStatus("");
   };
 
   const handleUpload = async () => {
-    if (!file) return setStatus("Choose a file first.");
+    if (!file) return alert("Choose a file first.");
 
-    const name = file.name.toLowerCase();
     try {
-      setStatus("Reading file…");
+      const name = file.name.toLowerCase();
 
+      // JSON
       if (name.endsWith(".json")) {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        const arr = Array.isArray(parsed) ? parsed : [];
-        const normalized = arr.map(normalizeRecord).filter(Boolean);
+        const normalized = normalizeAnyRows(parsed);
         onUpload?.(normalized);
-        setStatus(`Uploaded ${normalized.length} rows from JSON.`);
+        setLastStatus(`Loaded ${normalized.length} rows from JSON.`);
         return;
       }
 
+      // CSV
       if (name.endsWith(".csv")) {
         const text = await file.text();
-        const normalized = parseCSV(text);
+        const rows = parseCSV(text);
+        const normalized = normalizeAnyRows(rows);
         onUpload?.(normalized);
-        setStatus(`Uploaded ${normalized.length} rows from CSV.`);
+        setLastStatus(`Loaded ${normalized.length} rows from CSV.`);
         return;
       }
 
-      setStatus("Unsupported file type. Use .json or .csv");
+      alert("Unsupported file type. Upload .csv or .json for this MVP build.");
     } catch (err) {
       console.error(err);
-      setStatus(err?.message || "Upload failed.");
+      alert(`Upload failed: ${err?.message || "Unknown error"}`);
     }
   };
 
   return (
-    <div style={{ marginTop: "1rem" }}>
-      <h3 style={{ marginBottom: "0.25rem" }}>Upload Transactions</h3>
-      <p style={{ marginTop: 0, fontSize: "0.9rem" }}>
-        Supported: <b>JSON</b>, <b>CSV</b>. (XLSX disabled for Netlify build stability.)
-      </p>
+    <div style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #ddd" }}>
+      <h3 style={{ marginTop: 0 }}>Upload Transactions</h3>
 
-      <input type="file" accept={accept} onChange={handleFileChange} />
-      <button onClick={handleUpload} style={{ marginLeft: 10 }}>
-        Upload
-      </button>
+      <input type="file" accept=".csv,.json" onChange={handleFileChange} />
 
-      {status ? (
-        <p style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
-          <b>Status:</b> {status}
+      <div style={{ marginTop: "0.5rem" }}>
+        <a href={templateHref} download>
+          Download CSV template
+        </a>
+      </div>
+
+      <div style={{ marginTop: "0.75rem" }}>
+        <button onClick={handleUpload}>Upload</button>
+      </div>
+
+      {lastStatus ? (
+        <p style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
+          <b>Status:</b> {lastStatus}
         </p>
       ) : null}
+
+      <p style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
+        Columns supported: <b>merchant</b>, <b>amount</b>, optional <b>date</b>/<b>description</b>. No category needed.
+      </p>
     </div>
   );
 }

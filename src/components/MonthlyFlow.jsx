@@ -2,329 +2,452 @@ import { useEffect, useMemo, useState } from "react";
 
 function pct(n) {
   if (n === null || n === undefined) return "—";
-  const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${(v * 100).toFixed(2)}%`;
+  return `${(n * 100).toFixed(2)}%`;
 }
 
-function toDateOnly(s) {
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+function maxDate(dates) {
+  const parsed = dates
+    .map((d) => new Date(d))
+    .filter((x) => !Number.isNaN(x.getTime()));
+  if (!parsed.length) return null;
+  parsed.sort((a, b) => b.getTime() - a.getTime());
+  return parsed[0].toISOString().slice(0, 10);
 }
 
-function uniqUpper(arr) {
-  const out = [];
-  const seen = new Set();
-  for (const x of arr || []) {
-    const t = String(x || "").toUpperCase().trim();
-    if (!t) continue;
-    if (seen.has(t)) continue;
-    seen.add(t);
-    out.push(t);
+async function safeFetchJson(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  const ct = (res.headers.get("content-type") || "").toLowerCase();
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Fetch failed (${res.status}) for ${url}\n` +
+        `Content-Type: ${ct || "unknown"}\n` +
+        `First chars: ${text.slice(0, 120)}`
+    );
   }
-  return out;
-}
 
-function uniqExact(arr) {
-  const out = [];
-  const seen = new Set();
-  for (const x of arr || []) {
-    const t = String(x || "").trim();
-    if (!t) continue;
-    const key = t.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
+  if (!ct.includes("application/json") && !ct.includes("text/json")) {
+    const text = await res.text();
+    throw new Error(
+      `Non-JSON response for ${url}\n` +
+        `Content-Type: ${ct || "unknown"}\n` +
+        `First chars: ${text.slice(0, 120)}`
+    );
   }
-  return out;
+
+  return await res.json();
 }
 
-/**
- * Monthly Flow (Paid • Preview)
- * - Uses admin-controlled community aggregate data from:
- *   /.netlify/functions/community
- * - In MVP, it can be deterministic mock data.
- * - In production, generated on a schedule from anonymized aggregates.
- * - Informational only; not recommendations.
- */
-export default function MonthlyFlow({ dripTickers, dripSectors }) {
-  const [payload, setPayload] = useState(null);
-  const [error, setError] = useState("");
+const sectorEtfs = [
+  { ticker: "XLC", name: "Communication Services" },
+  { ticker: "XLY", name: "Consumer Discretionary" },
+  { ticker: "XLP", name: "Consumer Staples" },
+  { ticker: "XLE", name: "Energy" },
+  { ticker: "XLF", name: "Financials" },
+  { ticker: "XLV", name: "Healthcare" },
+  { ticker: "XLI", name: "Industrials" },
+  { ticker: "XLB", name: "Materials" },
+  { ticker: "XLK", name: "Technology" },
+  { ticker: "XLU", name: "Utilities" },
+  { ticker: "XLRE", name: "Real Estate" }
+];
 
+const SIGNAL_EXPLAINER_PREVIEW = [
+  {
+    title: "High spend concentration",
+    body:
+      "A larger share of total community spend is clustering in that sector compared to other sectors (aggregate-only)."
+  },
+  {
+    title: "Moderate concentration",
+    body:
+      "Community spend clusters in that sector, but not overwhelmingly versus others (aggregate-only)."
+  },
+  {
+    title: "Broad-based",
+    body:
+      "Spend is spread across multiple sectors rather than clustering strongly into one (aggregate-only)."
+  },
+  {
+    title: "High breadth",
+    body:
+      "Many distinct merchants/brands contribute to the sector’s signal (more diversified community behavior)."
+  },
+  {
+    title: "Medium breadth",
+    body:
+      "A moderate number of merchants/brands contribute to the sector’s signal."
+  },
+  {
+    title: "Narrow breadth",
+    body:
+      "Fewer merchants/brands contribute to the signal (more concentrated community behavior)."
+  },
+  {
+    title: "Stable",
+    body:
+      "The aggregate signal is persistent across recent periods (less noisy)."
+  },
+  {
+    title: "Emerging",
+    body:
+      "The signal appears to be strengthening recently (developing trend)."
+  },
+  {
+    title: "Spiky",
+    body:
+      "The signal is more volatile or event-driven (more noisy)."
+  }
+];
+
+const SIGNAL_LINE_READER =
+  "How to read the full Signal line: Signals are a 3-part label: (1) concentration = how clustered spend is, (2) breadth = how many distinct merchants contribute, (3) stability = how persistent the signal is over time. Example: “High spend concentration · Narrow breadth · Stable” means community spend is clustered into that sector, driven by fewer merchants, and the pattern has persisted across recent periods.";
+
+const EXTRA_SIGNALS = [
+  {
+    title: "Momentum spillover",
+    body:
+      "Often appears when a broader sector/theme is moving and related names get pulled along. This is a correlation-style flag, not a causal claim."
+  },
+  {
+    title: "Stable breadth",
+    body:
+      "Community activity is spread across multiple names within a sector (more diversified behavior)."
+  }
+];
+
+export default function MonthlyFlow({ userSpendTickers, userRunners }) {
+  const [communityItems, setCommunityItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const [sectorLeaders, setSectorLeaders] = useState([]);
+  const [leadersLoading, setLeadersLoading] = useState(false);
+
+  const [fatalLoadError, setFatalLoadError] = useState("");
+
+  // Load admin-fed community file
   useEffect(() => {
-    let alive = true;
-
-    fetch("/.netlify/functions/community")
-      .then((r) => r.json())
-      .then((j) => {
-        if (!alive) return;
-        if (!j || j.ok !== true || !j.data) {
-          setError("Community data unavailable.");
-          setPayload(null);
-          return;
-        }
-        setPayload(j.data);
-        setError("");
-      })
-      .catch(() => {
-        if (!alive) return;
-        setError("Community data unavailable.");
-        setPayload(null);
-      });
-
-    return () => {
-      alive = false;
+    const run = async () => {
+      setLoading(true);
+      setFatalLoadError("");
+      try {
+        const json = await safeFetchJson("/community-flow.json");
+        const arr = Array.isArray(json) ? json : [];
+        setCommunityItems(arr);
+      } catch (e) {
+        console.error("MonthlyFlow load error:", e);
+        setCommunityItems([]);
+        setFatalLoadError(e?.message || String(e));
+      } finally {
+        setLoading(false);
+      }
     };
+    run();
+  }, []);
+
+  const normalizedCommunity = useMemo(() => {
+    return (Array.isArray(communityItems) ? communityItems : [])
+      .map((x) => ({
+        ticker: String(x.ticker || "").toUpperCase().trim(),
+        sector: String(x.sector || "Other / Unmapped"),
+        signal: String(x.signal || "—"),
+        count: Number(x.count ?? 0)
+      }))
+      .filter((x) => x.ticker && x.sector && Number.isFinite(x.count));
+  }, [communityItems]);
+
+  // Community Top Sectors by aggregated "count"
+  const communityTopSectors = useMemo(() => {
+    const map = new Map();
+    for (const x of normalizedCommunity) {
+      const s = String(x.sector || "Other / Unmapped");
+      const c = Number(x.count ?? 0);
+      map.set(s, (map.get(s) || 0) + (Number.isFinite(c) ? c : 0));
+    }
+    const sorted = Array.from(map.entries())
+      .map(([sector, score]) => ({ sector, score }))
+      .sort((a, b) => b.score - a.score)
+      .filter((x) => x.sector && x.sector !== "Other / Unmapped");
+    return sorted.slice(0, 5).map((x) => x.sector);
+  }, [normalizedCommunity]);
+
+  const narrativeHighestSector = useMemo(() => {
+    return communityTopSectors[0] || "—";
+  }, [communityTopSectors]);
+
+  // Top 10 Community Runners (ensures at least one per top sector if available)
+  const top10CommunityRunners = useMemo(() => {
+    const topSectorSet = new Set(communityTopSectors);
+
+    const preferred = normalizedCommunity.filter((x) => topSectorSet.has(x.sector));
+    const pool = preferred.length ? preferred : normalizedCommunity;
+
+    const sorted = [...pool].sort((a, b) => b.count - a.count);
+
+    const chosen = [];
+    const seen = new Set();
+
+    // one per top sector first
+    for (const s of communityTopSectors) {
+      const pick = sorted.find((x) => x.sector === s && !seen.has(x.ticker));
+      if (pick) {
+        chosen.push(pick);
+        seen.add(pick.ticker);
+      }
+    }
+
+    // fill remaining
+    for (const x of sorted) {
+      if (chosen.length >= 10) break;
+      if (seen.has(x.ticker)) continue;
+      chosen.push(x);
+      seen.add(x.ticker);
+    }
+
+    return chosen.slice(0, 10);
+  }, [normalizedCommunity, communityTopSectors]);
+
+  // Fetch sector leader ETFs (same source as MarketPulse uses)
+  useEffect(() => {
+    const run = async () => {
+      setLeadersLoading(true);
+      setFatalLoadError("");
+      try {
+        const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
+        const json = await safeFetchJson(
+          `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
+        );
+        const items = Array.isArray(json.items) ? json.items : [];
+        items.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
+        const top5 = items.slice(0, 5).map((x) => ({
+          ...x,
+          sectorName: sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
+        }));
+        setSectorLeaders(top5);
+      } catch (e) {
+        console.error("MonthlyFlow sector leaders error:", e);
+        setSectorLeaders([]);
+        setFatalLoadError((prev) => prev || (e?.message || String(e)));
+      } finally {
+        setLeadersLoading(false);
+      }
+    };
+    run();
   }, []);
 
   const asOf = useMemo(() => {
-    if (!payload?.asOf) return "—";
-    return toDateOnly(payload.asOf) || "—";
-  }, [payload]);
+    const d = sectorLeaders.map((x) => x.latestDate).filter(Boolean);
+    return maxDate(d);
+  }, [sectorLeaders]);
 
-  const topSectors = useMemo(() => {
-    return Array.isArray(payload?.topSectors) ? payload.topSectors : [];
-  }, [payload]);
+  // FLOW ALIGNMENT: user spend tickers vs community tickers
+  const alignmentUserSpendVsCommunity = useMemo(() => {
+    const userSet = new Set((userSpendTickers || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean));
+    if (!userSet.size) return [];
 
-  const communityRunners = useMemo(() => {
-    return Array.isArray(payload?.communityRunners) ? payload.communityRunners : [];
-  }, [payload]);
+    // Show up to 15 matches; highest count first
+    const matches = normalizedCommunity
+      .filter((x) => userSet.has(x.ticker))
+      .sort((a, b) => b.count - a.count);
 
-  const top10Community = useMemo(() => communityRunners.slice(0, 10), [communityRunners]);
-
-  const dripTickerSet = useMemo(() => new Set(uniqUpper(dripTickers || [])), [dripTickers]);
-  const dripSectorList = useMemo(() => uniqExact(dripSectors || []), [dripSectors]);
-  const dripSectorSet = useMemo(
-    () => new Set(dripSectorList.map((s) => s.toLowerCase())),
-    [dripSectorList]
-  );
-
-  const communityTopSectorNames = useMemo(() => {
-    return topSectors.slice(0, 5).map((x) => String(x?.sector || "").trim()).filter(Boolean);
-  }, [topSectors]);
-
-  const communitySectorSet = useMemo(
-    () => new Set(communityTopSectorNames.map((s) => s.toLowerCase())),
-    [communityTopSectorNames]
-  );
-
-  // Sector overlap: Drip top spend sectors vs Community top sectors
-  const sectorOverlap = useMemo(() => {
-    if (!dripSectorSet.size || !communitySectorSet.size) return [];
-    const overlap = [];
-    for (const s of dripSectorList) {
-      if (communitySectorSet.has(s.toLowerCase())) overlap.push(s);
-    }
-    return overlap;
-  }, [dripSectorSet, communitySectorSet, dripSectorList]);
-
-  // Ticker overlap: Drip-side tickers (universe) vs Community top 10
-  const tickerOverlap = useMemo(() => {
-    if (!dripTickerSet.size) return [];
+    // de-dupe tickers
+    const seen = new Set();
     const out = [];
-    for (const r of top10Community) {
-      const t = String(r?.ticker || "").toUpperCase().trim();
-      if (!t) continue;
-      if (dripTickerSet.has(t)) out.push(r);
+    for (const m of matches) {
+      if (seen.has(m.ticker)) continue;
+      out.push(m);
+      seen.add(m.ticker);
+      if (out.length >= 15) break;
     }
     return out;
-  }, [dripTickerSet, top10Community]);
+  }, [userSpendTickers, normalizedCommunity]);
 
-  // Signal phrase explainer for:
-  // "High spend concentration · Narrow breadth · Stable"
-  const signalExplainer = useMemo(() => {
-    return [
-      {
-        key: "High spend concentration",
-        meaning:
-          "A larger share of total community spend is clustering in that sector compared to other sectors (aggregate-only)."
-      },
-      {
-        key: "Moderate concentration",
-        meaning:
-          "Community spend clusters in that sector, but not overwhelmingly versus others (aggregate-only)."
-      },
-      {
-        key: "Broad-based",
-        meaning:
-          "Spend is spread across multiple sectors rather than clustering strongly into one (aggregate-only)."
-      },
-      {
-        key: "High breadth",
-        meaning:
-          "Many distinct merchants/brands contribute to the sector’s signal (more diversified community behavior)."
-      },
-      {
-        key: "Medium breadth",
-        meaning:
-          "A moderate number of merchants/brands contribute to the sector’s signal."
-      },
-      {
-        key: "Narrow breadth",
-        meaning:
-          "Fewer merchants/brands contribute to the signal (more concentrated community behavior)."
-      },
-      {
-        key: "Stable",
-        meaning:
-          "The aggregate signal is persistent across recent periods (less noisy)."
-      },
-      {
-        key: "Emerging",
-        meaning:
-          "The signal appears to be strengthening recently (developing trend)."
-      },
-      {
-        key: "Spiky",
-        meaning:
-          "The signal is more volatile or event-driven (more noisy)."
-      },
-      {
-        key: "How to read the full Signal line",
-        meaning:
-          "Signals are a 3-part label: (1) concentration = how clustered spend is, (2) breadth = how many distinct merchants contribute, (3) stability = how persistent the signal is over time. Example: “High spend concentration · Narrow breadth · Stable” means community spend is clustered into that sector, driven by fewer merchants, and the pattern has persisted across recent periods."
-      }
-    ];
-  }, []);
+  // FLOW ALIGNMENT: user spend tickers vs community runners
+  const alignmentUserSpendVsCommunityRunners = useMemo(() => {
+    const userSet = new Set((userSpendTickers || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean));
+    if (!userSet.size) return [];
+    return top10CommunityRunners.filter((x) => userSet.has(x.ticker));
+  }, [userSpendTickers, top10CommunityRunners]);
 
-  const confidenceNote = useMemo(() => {
-    return (
-      "Monthly Flow is a paid preview powered by anonymized aggregate data. " +
-      "Signals are heuristics (spend concentration, breadth, stability) and 30D return proxies where shown. " +
-      "Data may lag or differ from broker feeds. Informational only — not a recommendation."
-    );
-  }, []);
-
-  if (error) {
-    return (
-      <div style={{ marginTop: "1rem" }}>
-        <h3>Monthly Flow (Paid • Preview)</h3>
-        <p style={{ fontSize: "0.9rem" }}>
-          Monthly Flow is part of the paid Drip+Flow subscription. This preview shows anonymized aggregate trends — informational only.
-        </p>
-        <p style={{ fontSize: "0.9rem" }}>{error}</p>
-      </div>
-    );
-  }
-
-  if (!payload) return null;
+  // FLOW OVERLAP: personal runners vs community runners
+  const overlapPersonalRunners = useMemo(() => {
+    const a = new Set((userRunners || []).map((t) => String(t).toUpperCase().trim()).filter(Boolean));
+    const b = new Set(top10CommunityRunners.map((x) => x.ticker));
+    const out = [];
+    for (const t of a) if (b.has(t)) out.push(t);
+    return out.sort();
+  }, [userRunners, top10CommunityRunners]);
 
   return (
     <div style={{ marginTop: "1rem" }}>
       <h3 style={{ marginBottom: "0.25rem" }}>Monthly Flow (Paid • Preview)</h3>
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        Monthly Flow is part of the paid Drip+Flow subscription. This preview shows anonymized aggregate trends — informational only.
+        Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
       </p>
 
-      <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        <b>As of:</b> {asOf}
-      </p>
+      {fatalLoadError ? (
+        <div style={{ padding: "0.75rem", background: "#fff3cd", border: "1px solid #ffeeba", marginBottom: "0.75rem" }}>
+          <b>Flow feed error:</b>
+          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: "0.85rem" }}>{fatalLoadError}</pre>
+        </div>
+      ) : null}
 
-      <p style={{ marginTop: 0 }}>
-        This month, the highest concentration of community spending was in{" "}
-        <b>{payload.narrativeHighestSector || "—"}</b>.
-      </p>
-
-      <h4 style={{ marginBottom: "0.25rem" }}>Top Sectors (Spend)</h4>
-      {topSectors.length === 0 ? (
-        <p style={{ fontSize: "0.9rem" }}>No community sector data available yet.</p>
-      ) : (
-        <ol style={{ marginTop: "0.25rem" }}>
-          {topSectors.slice(0, 5).map((x, idx) => (
-            <li key={`${x.sector}-${idx}`}>
-              <b>{x.sector || "—"}</b>
-              {typeof x.weight === "number" ? `: ${pct(x.weight)}` : ""}
-            </li>
-          ))}
-        </ol>
-      )}
-
-      <h4 style={{ marginTop: "0.75rem", marginBottom: "0.25rem" }}>
-        Top 10 Runners (30D) — Based on Community Top Spend Sectors
-      </h4>
-
-      {top10Community.length === 0 ? (
-        <p style={{ fontSize: "0.9rem" }}>
-          No community runners shown yet (admin aggregate feed not populated).
+      {/* SECTION 1: Community Spend Summary */}
+      <div style={{ padding: "0.75rem", border: "1px solid #ddd", marginTop: "0.5rem" }}>
+        <b>Section 1 — Community Spend Summary</b>
+        <p style={{ fontSize: "0.95rem", marginBottom: 0 }}>
+          This month, the highest concentration of community spending was in <b>{narrativeHighestSector}</b>.
         </p>
-      ) : (
-        <ol style={{ marginTop: "0.25rem" }}>
-          {top10Community.map((x, idx) => (
-            <li key={`${x.ticker}-${idx}`} style={{ marginBottom: "0.35rem" }}>
-              <b>{x.sector || "—"}</b> — {String(x.ticker || "—").toUpperCase()}
-              {typeof x.return30d === "number" ? `: ${pct(x.return30d)}` : ""}
-              {x.signal ? ` · Signal: ${x.signal}` : ""}
-            </li>
-          ))}
-        </ol>
-      )}
 
-      <h4 style={{ marginTop: "0.75rem", marginBottom: "0.25rem" }}>
-        Alignment Snapshot (Personal vs Community)
-      </h4>
-
-      <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        This summarizes overlap between your mapped spend sectors (Monthly Drip) and community aggregate trends (Monthly Flow), plus overlap between drip-side tickers and community runners.
-      </p>
-
-      <div style={{ padding: "0.75rem", background: "#f6f6f6" }}>
-        <div style={{ fontSize: "0.95rem" }}>
-          <b>Sector overlap</b>
-        </div>
-        {!dripSectorList.length ? (
-          <p style={{ fontSize: "0.9rem" }}>
-            No sector overlap available yet (upload transactions so Monthly Drip can map sectors).
-          </p>
-        ) : sectorOverlap.length === 0 ? (
-          <p style={{ fontSize: "0.9rem" }}>
-            No overlap between your top spend sectors and the community’s top sectors this period.
-          </p>
-        ) : (
-          <p style={{ fontSize: "0.9rem" }}>
-            Shared sectors: <b>{sectorOverlap.join(", ")}</b>
-          </p>
-        )}
-
-        <div style={{ fontSize: "0.95rem", marginTop: "0.6rem" }}>
-          <b>Ticker overlap</b>
-        </div>
-        {!dripTickers || uniqUpper(dripTickers).length === 0 ? (
-          <p style={{ fontSize: "0.9rem" }}>
-            No ticker overlap available yet (drip-side ticker universe not loaded).
-          </p>
-        ) : tickerOverlap.length === 0 ? (
-          <p style={{ fontSize: "0.9rem" }}>
-            No overlap in the current top community runners.
-          </p>
-        ) : (
-          <ol style={{ marginTop: "0.25rem" }}>
-            {tickerOverlap.map((x, idx) => (
-              <li key={`${x.ticker}-overlap-${idx}`} style={{ marginBottom: "0.35rem" }}>
-                <b>{x.sector || "—"}</b> — {String(x.ticker || "—").toUpperCase()}
-                {typeof x.return30d === "number" ? `: ${pct(x.return30d)}` : ""}
-                {x.signal ? ` · Signal: ${x.signal}` : ""}
+        <h4 style={{ marginBottom: "0.25rem" }}>Top Sectors (Community Spend)</h4>
+        {loading ? (
+          <p style={{ fontSize: "0.9rem" }}>Loading community feed…</p>
+        ) : communityTopSectors.length ? (
+          <ol>
+            {communityTopSectors.map((s) => (
+              <li key={s}>
+                <b>{s}</b>
               </li>
             ))}
           </ol>
+        ) : (
+          <p style={{ fontSize: "0.9rem" }}>
+            No community sectors shown yet (admin aggregate feed not populated).
+          </p>
         )}
       </div>
 
-      <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
-        <b>Signals explained (preview):</b>
-        <p style={{ fontSize: "0.9rem", marginTop: "0.4rem" }}>
-          When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
+      {/* SECTION 2: Sector Leaders */}
+      <div style={{ padding: "0.75rem", border: "1px solid #ddd", marginTop: "0.75rem" }}>
+        <b>Section 2 — Market Context (Sector Leaders)</b>
+
+        <h4 style={{ marginTop: "0.5rem" }}>Top 5 Sector Leaders (30D) — ETF Proxies</h4>
+        <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
+          <b>As of:</b> {asOf || "—"} {leadersLoading ? "(Loading…)" : ""}
         </p>
-        <ul style={{ marginTop: "0.5rem" }}>
-          {signalExplainer.map((s) => (
-            <li key={s.key} style={{ marginBottom: "0.25rem" }}>
-              <b>{s.key}:</b> {s.meaning}
-            </li>
-          ))}
-        </ul>
-        <div style={{ marginTop: "0.6rem", fontSize: "0.9rem" }}>
-          <b>Confidence note:</b> {confidenceNote}
+        {sectorLeaders.length ? (
+          <ol>
+            {sectorLeaders.map((x) => (
+              <li key={x.ticker}>
+                <b>{x.sectorName}</b> ({x.ticker}): <b>{pct(x.return30d)}</b>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p style={{ fontSize: "0.9rem" }}>No sector leader data yet.</p>
+        )}
+      </div>
+
+      {/* SECTION 3: Community Runners + Alignment Snapshot (Flow) */}
+      <div style={{ padding: "0.75rem", border: "1px solid #ddd", marginTop: "0.75rem" }}>
+        <b>Section 3 — Community Runners + Alignment (Flow)</b>
+
+        <h4 style={{ marginTop: "0.5rem" }}>Top 10 Runners (30D) — Based on Community Top Spend Sectors</h4>
+        {top10CommunityRunners.length ? (
+          <ol>
+            {top10CommunityRunners.map((x) => (
+              <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
+                <b>{x.sector}</b> — {x.ticker}{" "}
+                <span style={{ fontSize: "0.9rem" }}>(Signal: {x.signal})</span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p style={{ fontSize: "0.9rem" }}>
+            No community runners shown yet (admin aggregate feed not populated).
+          </p>
+        )}
+
+        {/* Alignment Snapshot (Flow) — TWO alignments + overlap */}
+        <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
+          <b>Alignment Snapshot (Flow)</b>
+          <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
+            This is a paid Flow preview: how your mapped spend/runners align with community signals — informational only.
+          </div>
+
+          <h4 style={{ marginTop: "0.75rem", marginBottom: "0.25rem" }}>
+            A) Your Spend Tickers ↔ Community Signals
+          </h4>
+          {alignmentUserSpendVsCommunity.length ? (
+            <ol>
+              {alignmentUserSpendVsCommunity.map((x) => (
+                <li key={`sig-${x.ticker}`} style={{ marginBottom: "0.35rem" }}>
+                  <b>{x.sector}</b> — {x.ticker}{" "}
+                  <span style={{ fontSize: "0.9rem" }}>(Signal: {x.signal})</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p style={{ fontSize: "0.9rem" }}>
+              No alignment yet (needs your uploaded transactions + merchant→ticker mapping to produce spend tickers).
+            </p>
+          )}
+
+          <h4 style={{ marginTop: "0.75rem", marginBottom: "0.25rem" }}>
+            B) Your Spend Tickers ↔ Community Runners
+          </h4>
+          {alignmentUserSpendVsCommunityRunners.length ? (
+            <ol>
+              {alignmentUserSpendVsCommunityRunners.map((x) => (
+                <li key={`run-${x.ticker}`} style={{ marginBottom: "0.35rem" }}>
+                  <b>{x.sector}</b> — {x.ticker}{" "}
+                  <span style={{ fontSize: "0.9rem" }}>(Signal: {x.signal})</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p style={{ fontSize: "0.9rem" }}>
+              No runner alignment yet (needs your spend tickers + populated community runners).
+            </p>
+          )}
+
+          <h4 style={{ marginTop: "0.75rem", marginBottom: "0.25rem" }}>
+            C) Overlap: Your Personal Runners ↔ Community Runners
+          </h4>
+          {overlapPersonalRunners.length ? (
+            <p style={{ fontSize: "0.95rem", marginTop: 0 }}>
+              Overlapping tickers: <b>{overlapPersonalRunners.join(", ")}</b>
+            </p>
+          ) : (
+            <p style={{ fontSize: "0.9rem" }}>
+              No overlap yet (needs personal runners from Market Pulse + community runners).
+            </p>
+          )}
+        </div>
+
+        {/* Signals explained */}
+        <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
+          <b>Signals explained (preview):</b>
+          <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
+            </div>
+
+            <ul style={{ marginTop: 0 }}>
+              {SIGNAL_EXPLAINER_PREVIEW.map((x) => (
+                <li key={x.title} style={{ marginBottom: "0.35rem" }}>
+                  <b>{x.title}</b>: {x.body}
+                </li>
+              ))}
+            </ul>
+
+            <div style={{ marginTop: "0.75rem" }}>
+              <b>How to read the full Signal line:</b>
+              <div style={{ marginTop: "0.25rem" }}>{SIGNAL_LINE_READER}</div>
+            </div>
+
+            <div style={{ marginTop: "0.75rem" }}>
+              <b>Additional signal tags you may see in this demo:</b>
+              <ul style={{ marginTop: "0.35rem" }}>
+                {EXTRA_SIGNALS.map((x) => (
+                  <li key={x.title} style={{ marginBottom: "0.35rem" }}>
+                    <b>{x.title}</b>: {x.body}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>
