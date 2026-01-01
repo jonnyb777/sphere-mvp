@@ -1,4 +1,6 @@
+// FILE: src/components/MarketPulse.jsx
 import { useEffect, useMemo, useState } from "react";
+import { pickTop10WithTwoPerSector } from "../utils/pickTop10WithTwoPerSector";
 
 function pct(n) {
   if (n === null || n === undefined) return "—";
@@ -18,6 +20,57 @@ function maxDate(dates) {
   return parsed[0].toISOString().slice(0, 10);
 }
 
+/**
+ * Fetch JSON from Netlify Functions in a way that works:
+ * - Live Netlify deploy (relative path works)
+ * - Netlify Dev (8888) (relative path works)
+ * - Vite dev (5173/5174) where relative path returns index.html (HTML) -> retry 8888
+ */
+async function fetchJsonNetlifyFunction(pathWithQuery) {
+  const isLocalhost =
+    window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1";
+  const port = String(window?.location?.port || "");
+
+  const tryUrls = [];
+  tryUrls.push(pathWithQuery);
+
+  if (isLocalhost && port !== "8888") {
+    tryUrls.push(`http://localhost:8888${pathWithQuery}`);
+  }
+
+  let lastErr = null;
+
+  for (const url of tryUrls) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const text = await res.text();
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} for ${url}\nFirst chars: ${text.slice(0, 120)}`);
+      }
+
+      const looksHtml =
+        ct.includes("text/html") || text.trim().toLowerCase().startsWith("<!doctype html");
+
+      if (looksHtml) {
+        throw new Error(
+          `Non-JSON response for ${url}\nContent-Type: ${ct || "unknown"}\nFirst chars: ${text.slice(0, 120)}`
+        );
+      }
+
+      return JSON.parse(text);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error("Failed to fetch JSON from function");
+}
+
+/**
+ * Sector ETFs for "Top 5 Sector Leaders"
+ */
 const sectorEtfs = [
   { ticker: "XLC", name: "Communication Services" },
   { ticker: "XLY", name: "Consumer Discretionary" },
@@ -44,11 +97,19 @@ const sectorUniverse = {
   Industrials: ["CAT", "GE", "HON", "DE", "MMM"]
 };
 
-export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableTickers }) {
+export default function MarketPulse({
+  topSpendSectors,
+  transactions, // kept in signature for stability
+  onAddTicker,
+  onAvailableTickers,
+  onPersonalRunnersChange,
+  onSectorLeadersChange
+}) {
   const [sectorLeaders, setSectorLeaders] = useState([]);
   const [tickerLeaders, setTickerLeaders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dataSourceNote, setDataSourceNote] = useState("");
+  const [fatalError, setFatalError] = useState("");
 
   const spendSectors = useMemo(
     () => (topSpendSectors || []).filter(Boolean).slice(0, 5),
@@ -86,66 +147,72 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
   useEffect(() => {
     const run = async () => {
       setLoading(true);
+      setFatalError("");
+
       try {
         // Sector leader ETFs
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
-        const etfRes = await fetch(`/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`);
-        const etfJson = await etfRes.json();
+        const etfJson = await fetchJsonNetlifyFunction(
+          `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
+        );
+
         const etfItems = Array.isArray(etfJson.items) ? etfJson.items : [];
         etfItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
-        const withNames = etfItems.slice(0, 5).map((x) => ({
+
+        const leaders = etfItems.slice(0, 5).map((x) => ({
           ...x,
           sectorName: sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
         }));
-        setSectorLeaders(withNames);
 
-        // Personal runners
+        setSectorLeaders(leaders);
+        if (typeof onSectorLeadersChange === "function") onSectorLeadersChange(leaders);
+
+        // Runners for your top spend sectors
         if (tickersForSpendSectors.length) {
-          const uniRes = await fetch(
+          const uniJson = await fetchJsonNetlifyFunction(
             `/.netlify/functions/market?tickers=${encodeURIComponent(tickersForSpendSectors.join(","))}`
           );
-          const uniJson = await uniRes.json();
           const uniItems = Array.isArray(uniJson.items) ? uniJson.items : [];
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
-          const labeled = uniItems.map((x) => ({
+          const labeledSorted = uniItems.map((x) => ({
             ...x,
             sectorName: tickerToSector[x.ticker] || "Other / Unmapped"
           }));
 
-          // Enforce representation: at least 1 from each spend sector if possible
-          const chosen = [];
-          const seen = new Set();
+          const top10 = pickTop10WithTwoPerSector({
+            items: labeledSorted, // already sorted by performance
+            topSectors: spendSectors,
+            getSector: (x) => x.sectorName,
+            getTicker: (x) => x.ticker,
+            maxTotal: 10,
+            maxPerTopSector: 2
+          });
 
-          for (const s of spendSectors) {
-            const pick = labeled.find((x) => x.sectorName === s && !seen.has(x.ticker));
-            if (pick) {
-              chosen.push(pick);
-              seen.add(pick.ticker);
-            }
+          setTickerLeaders(top10);
+
+          if (typeof onPersonalRunnersChange === "function") {
+            onPersonalRunnersChange(top10.map((x) => x.ticker));
           }
-
-          for (const x of labeled) {
-            if (chosen.length >= 10) break;
-            if (seen.has(x.ticker)) continue;
-            chosen.push(x);
-            seen.add(x.ticker);
-          }
-
-          setTickerLeaders(chosen.slice(0, 10));
         } else {
           setTickerLeaders([]);
+          if (typeof onPersonalRunnersChange === "function") onPersonalRunnersChange([]);
         }
 
         setDataSourceNote(
-          "Returns are computed from free daily close data via a Netlify Function, using the most recent available trading day and the closest close at ~30 calendar days prior. Data may be delayed or differ from broker feeds due to corporate actions/adjustments. Informational only; not a recommendation."
+          "Returns are computed from free daily close data via a Netlify Function. Informational only; not a recommendation."
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
         setSectorLeaders([]);
         setTickerLeaders([]);
+        setFatalError(e?.message || String(e));
+
+        if (typeof onSectorLeadersChange === "function") onSectorLeadersChange([]);
+        if (typeof onPersonalRunnersChange === "function") onPersonalRunnersChange([]);
+
         setDataSourceNote(
-          "Market data is fetched from a free daily price source and may occasionally fail, lag, or differ from broker/official feeds. Treat results as informational only."
+          "Market data may occasionally fail/lag. If it fails, it’s usually the function endpoint not returning JSON."
         );
       } finally {
         setLoading(false);
@@ -153,7 +220,13 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
     };
 
     run();
-  }, [tickersForSpendSectors, tickerToSector, spendSectors]);
+  }, [
+    tickersForSpendSectors,
+    tickerToSector,
+    spendSectors,
+    onPersonalRunnersChange,
+    onSectorLeadersChange
+  ]);
 
   return (
     <div style={{ marginTop: "1rem" }}>
@@ -161,6 +234,22 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
         <b>As of:</b> {asOf || "—"} {loading ? "(Loading…)" : ""}
       </p>
+
+      {fatalError ? (
+        <div
+          style={{
+            padding: "0.75rem",
+            background: "#fff3cd",
+            border: "1px solid #ffeeba",
+            marginBottom: "0.75rem"
+          }}
+        >
+          <b>Market Pulse error:</b>
+          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: "0.85rem" }}>
+            {fatalError}
+          </pre>
+        </div>
+      ) : null}
 
       <h4>Top 5 Sector Leaders (30D) — ETF Proxies</h4>
       {sectorLeaders.length === 0 ? (
@@ -193,6 +282,27 @@ export default function MarketPulse({ topSpendSectors, onAddTicker, onAvailableT
           ))}
         </ol>
       )}
+
+      {/* Separate add area (not inside runner list) */}
+      {typeof onAddTicker === "function" && tickerLeaders.length ? (
+        <div style={{ marginTop: "0.9rem", padding: "0.75rem", background: "#f6f6f6" }}>
+          <b>Add a runner to Paper Portfolio</b>
+          <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
+            Select a runner to add (you’ll be prompted for the simulated amount).
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+            {tickerLeaders.map((x) => (
+              <button
+                key={"add-" + x.ticker}
+                onClick={() => onAddTicker(x.ticker)}
+                style={{ padding: "0.35rem 0.6rem" }}
+              >
+                Add {x.ticker}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
         <b>Confidence note:</b>

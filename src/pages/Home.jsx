@@ -5,6 +5,7 @@ import MarketPulse from "../components/MarketPulse";
 import MonthlyFlow from "../components/MonthlyFlow";
 import PaperPortfolio from "../components/PaperPortfolio";
 import AutoInvestPreview from "../components/AutoInvestPreview";
+import AlignmentSnapshotDrip from "../components/AlignmentSnapshotDrip";
 import { inferTickerFromMerchant } from "../utils/mappings";
 import { PageShell, Tabs, Card, Divider, Hint, Pill } from "../components/ui/UiKit";
 
@@ -17,6 +18,9 @@ export default function Home({ user }) {
   const [availableTickers, setAvailableTickers] = useState([]);
   const [paperTickers, setPaperTickers] = useState([]);
   const [personalRunners, setPersonalRunners] = useState([]);
+
+  // Drip AlignmentSnapshot needs sector leaders from MarketPulse
+  const [sectorLeaders, setSectorLeaders] = useState([]);
 
   // AutoInvestPreview needs merchant totals
   const merchantTotals = useMemo(() => {
@@ -48,7 +52,7 @@ export default function Home({ user }) {
     if (!t) return;
     const amtRaw = prompt(`Simulated amount to add for ${t} (USD):`, "10");
     if (amtRaw === null) return;
-    const amt = Number(amtRaw);
+    const amt = Number(String(amtRaw).replace(/[$,]/g, "").trim());
     if (!Number.isFinite(amt) || amt <= 0) return alert("Enter a positive amount.");
     window.dispatchEvent(new CustomEvent("sphere:addPaper", { detail: { ticker: t, amount: amt } }));
   };
@@ -82,10 +86,11 @@ export default function Home({ user }) {
     >
       <Tabs value={activeTab} onChange={setActiveTab} tabs={tabDefs} />
 
-      {/* DRIP TAB */}
+      {/* =======================
+          DRIP TAB (DO NOT BREAK)
+         ======================= */}
       {activeTab === "drip" ? (
         <div>
-          {/* NOTE: Divider label is the ONE title; Card header is intentionally blank */}
           <Divider label="Upload Transactions" />
           <Card>
             <TransactionUploader onUpload={setTransactions} />
@@ -104,6 +109,16 @@ export default function Home({ user }) {
               onAddTicker={handleAddTickerToPaper}
               onAvailableTickers={setAvailableTickers}
               onPersonalRunnersChange={setPersonalRunners}
+              onSectorLeadersChange={setSectorLeaders}
+            />
+          </Card>
+
+          <Divider label="Alignment Snapshot (Drip)" />
+          <Card>
+            <AlignmentSnapshotDrip
+              transactions={transactions}
+              sectorLeaders={sectorLeaders}
+              personalRunners={personalRunners}
             />
           </Card>
 
@@ -114,12 +129,36 @@ export default function Home({ user }) {
         </div>
       ) : null}
 
-      {/* FLOW TAB */}
+      {/* =======================
+          FLOW TAB (RESTORE 3 SECTIONS)
+         ======================= */}
       {activeTab === "flow" ? (
         <div>
           <Divider label="Monthly Flow (Paid • Preview)" />
           <Card>
-            <MonthlyFlow userSpendTickers={userSpendTickers} userRunners={personalRunners} />
+            <MonthlyFlow
+              userSpendTickers={userSpendTickers}
+              userRunners={personalRunners}
+              section="monthly"
+            />
+          </Card>
+
+          <Divider label="Market Pulse (Trailing 30 Days)" />
+          <Card>
+            <MonthlyFlow
+              userSpendTickers={userSpendTickers}
+              userRunners={personalRunners}
+              section="pulse"
+            />
+          </Card>
+
+          <Divider label="Alignment Snapshot (Flow)" />
+          <Card>
+            <MonthlyFlow
+              userSpendTickers={userSpendTickers}
+              userRunners={personalRunners}
+              section="alignment"
+            />
           </Card>
 
           <Hint>
@@ -129,7 +168,9 @@ export default function Home({ user }) {
         </div>
       ) : null}
 
-      {/* PORTFOLIO TAB */}
+      {/* =======================
+          PORTFOLIO TAB (DO NOT BREAK)
+         ======================= */}
       {activeTab === "portfolio" ? (
         <div>
           <Divider label="Paper Portfolio" />

@@ -1,93 +1,150 @@
-// src/utils/mappings.js
+// FILE: src/utils/mappings.js
 
-export const MERCHANT_TO_TICKER = [
-  // Restaurants
-  { match: ["chipotle"], ticker: "CMG" },
-  { match: ["starbucks"], ticker: "SBUX" },
-  { match: ["mcdonald", "mcdonald's"], ticker: "MCD" },
-  { match: ["domino"], ticker: "DPZ" },
-  { match: ["yum", "taco bell", "kfc", "pizza hut"], ticker: "YUM" },
-  { match: ["dunkin"], ticker: "DNKN" }, // note: legacy; may not resolve depending on provider
-  { match: ["wendy"], ticker: "WEN" },
+/**
+ * Central mapping utilities for Sphere MVP.
+ * - Company directory: for typeahead autocomplete (company -> ticker)
+ * - Helpers: search companies, normalize input
+ *
+ * Keep this small & editable for MVP. In the live product, this can come from
+ * a backend table/API.
+ */
 
-  // Retail / Commerce
-  { match: ["amazon"], ticker: "AMZN" },
-  { match: ["target"], ticker: "TGT" },
-  { match: ["walmart"], ticker: "WMT" },
-  { match: ["costco"], ticker: "COST" },
-  { match: ["home depot", "homedepot"], ticker: "HD" },
-  { match: ["lowe", "lowes"], ticker: "LOW" },
-  { match: ["best buy", "bestbuy"], ticker: "BBY" },
-  { match: ["ikea"], ticker: "INGKA" }, // not public; will be ignored if you keep ticker-only logic
-  { match: ["etsy"], ticker: "ETSY" },
-  { match: ["shopify"], ticker: "SHOP" },
-  { match: ["nike"], ticker: "NKE" },
-  { match: ["lululemon", "lulu"], ticker: "LULU" },
-  { match: ["adidas"], ticker: "ADDYY" },
-  { match: ["gap"], ticker: "GPS" },
+export const COMPANY_DIRECTORY = [
+  // Technology
+  { name: "Apple", ticker: "AAPL", sector: "Technology" },
+  { name: "Microsoft", ticker: "MSFT", sector: "Technology" },
+  { name: "NVIDIA", ticker: "NVDA", sector: "Technology" },
+  { name: "Alphabet (Google)", ticker: "GOOGL", sector: "Technology" },
+  { name: "Meta Platforms", ticker: "META", sector: "Technology" },
+  { name: "Broadcom", ticker: "AVGO", sector: "Technology" },
+  { name: "Advanced Micro Devices", ticker: "AMD", sector: "Technology" },
+  { name: "Oracle", ticker: "ORCL", sector: "Technology" },
 
-  // Grocery / Staples
-  { match: ["kroger"], ticker: "KR" },
-  { match: ["whole foods", "wholefoods"], ticker: "AMZN" }, // Amazon-owned; MVP shortcut
-  { match: ["trader joe", "trader joes"], ticker: "" }, // private
-  { match: ["aldi"], ticker: "" }, // private
+  // Consumer & Retail
+  { name: "Amazon", ticker: "AMZN", sector: "Consumer & Retail" },
+  { name: "Target", ticker: "TGT", sector: "Consumer & Retail" },
+  { name: "Walmart", ticker: "WMT", sector: "Consumer & Retail" },
+  { name: "Costco", ticker: "COST", sector: "Consumer & Retail" },
+  { name: "Home Depot", ticker: "HD", sector: "Consumer & Retail" },
+  { name: "Lowe's", ticker: "LOW", sector: "Consumer & Retail" },
 
-  // Pharmacy / Healthcare retail
-  { match: ["cvs"], ticker: "CVS" },
-  { match: ["walgreens"], ticker: "WBA" },
-  { match: ["rite aid", "riteaid"], ticker: "" }, // private / distressed; leave blank
+  // Healthcare
+  { name: "UnitedHealth Group", ticker: "UNH", sector: "Healthcare" },
+  { name: "Johnson & Johnson", ticker: "JNJ", sector: "Healthcare" },
+  { name: "Merck", ticker: "MRK", sector: "Healthcare" },
+  { name: "Pfizer", ticker: "PFE", sector: "Healthcare" },
+  { name: "AbbVie", ticker: "ABBV", sector: "Healthcare" },
+  { name: "CVS Health", ticker: "CVS", sector: "Healthcare" },
 
-  // Streaming / Media
-  { match: ["netflix"], ticker: "NFLX" },
-  { match: ["disney", "hulu"], ticker: "DIS" },
-  { match: ["spotify"], ticker: "SPOT" },
-  { match: ["warner", "hbo", "max"], ticker: "WBD" },
-
-  // Travel / Transport
-  { match: ["uber"], ticker: "UBER" },
-  { match: ["lyft"], ticker: "LYFT" },
-  { match: ["delta"], ticker: "DAL" },
-  { match: ["southwest"], ticker: "LUV" },
-  { match: ["american airlines"], ticker: "AAL" },
-  { match: ["united airlines"], ticker: "UAL" },
-  { match: ["fedex", "fed ex"], ticker: "FDX" },
-  { match: ["ups"], ticker: "UPS" },
-
-  // Tech / Devices / Subscriptions
-  { match: ["apple", "itunes", "app store"], ticker: "AAPL" },
-  { match: ["microsoft", "xbox"], ticker: "MSFT" },
-  { match: ["google", "youtube"], ticker: "GOOGL" },
-  { match: ["meta", "facebook", "instagram"], ticker: "META" },
-  { match: ["nvidia"], ticker: "NVDA" },
-  { match: ["amd"], ticker: "AMD" },
-  { match: ["oracle"], ticker: "ORCL" },
-  { match: ["adobe"], ticker: "ADBE" },
-  { match: ["salesforce"], ticker: "CRM" },
-
-  // Financial brands (payments + banks)
-  { match: ["visa"], ticker: "V" },
-  { match: ["mastercard", "master card"], ticker: "MA" },
-  { match: ["amex", "american express"], ticker: "AXP" },
-  { match: ["paypal"], ticker: "PYPL" },
-  { match: ["square", "cash app", "cashapp"], ticker: "SQ" },
-  { match: ["jpmorgan", "jp morgan", "chase"], ticker: "JPM" },
-  { match: ["bank of america"], ticker: "BAC" },
-  { match: ["wells fargo"], ticker: "WFC" },
-  { match: ["citi", "citibank"], ticker: "C" },
-  { match: ["goldman"], ticker: "GS" },
+  // Financials
+  { name: "JPMorgan Chase", ticker: "JPM", sector: "Financials" },
+  { name: "Bank of America", ticker: "BAC", sector: "Financials" },
+  { name: "Goldman Sachs", ticker: "GS", sector: "Financials" },
+  { name: "Morgan Stanley", ticker: "MS", sector: "Financials" },
+  { name: "Citigroup", ticker: "C", sector: "Financials" },
+  { name: "Visa", ticker: "V", sector: "Financials" },
+  { name: "Mastercard", ticker: "MA", sector: "Financials" },
 
   // Energy
-  { match: ["exxon"], ticker: "XOM" },
-  { match: ["chevron"], ticker: "CVX" },
-  { match: ["shell"], ticker: "SHEL" },
-  { match: ["valero"], ticker: "VLO" },
-  { match: ["phillips 66", "phillips66"], ticker: "PSX" }
+  { name: "Exxon Mobil", ticker: "XOM", sector: "Energy" },
+  { name: "Chevron", ticker: "CVX", sector: "Energy" },
+  { name: "ConocoPhillips", ticker: "COP", sector: "Energy" },
+  { name: "Schlumberger", ticker: "SLB", sector: "Energy" },
+  { name: "Phillips 66", ticker: "PSX", sector: "Energy" },
+
+  // Restaurants
+  { name: "McDonald's", ticker: "MCD", sector: "Restaurants" },
+  { name: "Starbucks", ticker: "SBUX", sector: "Restaurants" },
+  { name: "Chipotle", ticker: "CMG", sector: "Restaurants" },
+  { name: "Yum! Brands", ticker: "YUM", sector: "Restaurants" },
+  { name: "Domino's", ticker: "DPZ", sector: "Restaurants" },
+
+  // Transportation
+  { name: "Uber", ticker: "UBER", sector: "Transportation" },
+  { name: "FedEx", ticker: "FDX", sector: "Transportation" },
+  { name: "UPS", ticker: "UPS", sector: "Transportation" },
+  { name: "Delta Air Lines", ticker: "DAL", sector: "Transportation" },
+  { name: "Southwest Airlines", ticker: "LUV", sector: "Transportation" },
+
+  // Media & Entertainment
+  { name: "Netflix", ticker: "NFLX", sector: "Media & Entertainment" },
+  { name: "Disney", ticker: "DIS", sector: "Media & Entertainment" },
+  { name: "Spotify", ticker: "SPOT", sector: "Media & Entertainment" },
+  { name: "Warner Bros. Discovery", ticker: "WBD", sector: "Media & Entertainment" }
 ];
 
-export function inferTickerFromMerchant(merchant) {
-  const m = String(merchant || "").toLowerCase();
-  for (const rule of MERCHANT_TO_TICKER) {
-    if (rule.match.some((k) => m.includes(k))) return rule.ticker;
+export function normalizeText(s) {
+  return String(s || "").toLowerCase().trim();
+}
+
+/**
+ * Typeahead search:
+ * - matches on company name OR ticker
+ * - returns top N best matches
+ */
+export function searchCompanies(query, limit = 8) {
+  const q = normalizeText(query);
+  if (!q) return [];
+
+  const scored = COMPANY_DIRECTORY.map((c) => {
+    const name = normalizeText(c.name);
+    const ticker = normalizeText(c.ticker);
+
+    // simple scoring: startsWith beats includes; ticker match gets boost
+    let score = 0;
+    if (ticker === q) score += 200;
+    if (ticker.startsWith(q)) score += 120;
+    if (name.startsWith(q)) score += 90;
+    if (ticker.includes(q)) score += 60;
+    if (name.includes(q)) score += 40;
+
+    return { ...c, _score: score };
+  })
+    .filter((x) => x._score > 0)
+    .sort((a, b) => b._score - a._score)
+    .slice(0, limit)
+    .map(({ _score, ...rest }) => rest);
+
+  return scored;
+}
+
+export function companyLabel(c) {
+  if (!c) return "";
+  return `${c.name} (${c.ticker})`;
+}
+
+export function findCompanyByTicker(ticker) {
+  const t = normalizeText(ticker).toUpperCase();
+  return COMPANY_DIRECTORY.find((c) => String(c.ticker).toUpperCase() === t) || null;
+}
+// Infer a ticker symbol from a merchant name
+export function inferTickerFromMerchant(merchant = "") {
+  const m = merchant.toLowerCase();
+
+  const MAP = [
+    { match: ["amazon"], ticker: "AMZN" },
+    { match: ["target"], ticker: "TGT" },
+    { match: ["walmart"], ticker: "WMT" },
+    { match: ["costco"], ticker: "COST" },
+    { match: ["apple"], ticker: "AAPL" },
+    { match: ["microsoft"], ticker: "MSFT" },
+    { match: ["google"], ticker: "GOOGL" },
+    { match: ["meta", "facebook"], ticker: "META" },
+    { match: ["netflix"], ticker: "NFLX" },
+    { match: ["chipotle"], ticker: "CMG" },
+    { match: ["starbucks"], ticker: "SBUX" },
+    { match: ["mcdonald"], ticker: "MCD" },
+    { match: ["uber"], ticker: "UBER" },
+    { match: ["lyft"], ticker: "LYFT" },
+    { match: ["cvx", "chevron"], ticker: "CVX" },
+    { match: ["exxon"], ticker: "XOM" },
+  ];
+
+  for (const entry of MAP) {
+    if (entry.match.some(k => m.includes(k))) {
+      return entry.ticker;
+    }
   }
-  return "";
+
+  return null;
 }
