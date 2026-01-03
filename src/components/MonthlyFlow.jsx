@@ -1,6 +1,6 @@
 // FILE: src/components/MonthlyFlow.jsx
 import { useEffect, useMemo, useState } from "react";
-import { pickTop10WithTwoPerSector } from "../utils/pickTop10WithTwoPerSector";
+import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool } from "./SectionUI";
 
 function pct(n) {
   if (n === null || n === undefined) return "—";
@@ -30,6 +30,7 @@ async function fetchJsonStrict(url) {
   return JSON.parse(text);
 }
 
+// ---------- Flow-specific helpers ----------
 const sectorEtfs = [
   { ticker: "XLC", name: "Communication Services" },
   { ticker: "XLY", name: "Consumer Discretionary" },
@@ -131,11 +132,14 @@ function bucketToEtfSectorName(bucket) {
   return "";
 }
 
-// Parse "A · B · C" into 3 parts
+// Parse "A · B · C" into parts
 function splitSignalLine(signal) {
   const s = String(signal || "").trim();
   if (!s || s === "—") return { raw: "—", parts: [] };
-  const parts = s.split("·").map((x) => x.trim()).filter(Boolean);
+  const parts = s
+    .split("·")
+    .map((x) => x.trim())
+    .filter(Boolean);
   return { raw: s, parts };
 }
 
@@ -146,6 +150,10 @@ export default function MonthlyFlow({
   onCommunityRunnersChange,
   section = "all" // "all" | "monthly" | "pulse" | "alignment"
 }) {
+  // If we're embedded inside Home's <Section>, Home already renders the header band.
+  // So: don't render SectionBand or gate content on openMonthly/openPulse/openAlign in embedded mode.
+  const embedded = section !== "all";
+
   const [communityItems, setCommunityItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [flowError, setFlowError] = useState("");
@@ -153,8 +161,30 @@ export default function MonthlyFlow({
   const [sectorLeaders, setSectorLeaders] = useState([]);
   const [leadersLoading, setLeadersLoading] = useState(false);
 
-  // Toggle ONLY for "Signals explained (preview)"
-  const [showSignalsExplainer, setShowSignalsExplainer] = useState(false);
+  // Persistent open/closed states (Flow tab) — still kept for "all" mode
+  const [openMonthly, setOpenMonthly] = usePersistedBool("sphere:flow:open:monthly", true);
+  const [openPulse, setOpenPulse] = usePersistedBool("sphere:flow:open:pulse", true);
+  const [openAlign, setOpenAlign] = usePersistedBool("sphere:flow:open:alignment", true);
+
+  // Monthly subsection toggles (triangle only)
+  const [openMonthlyMerchants, setOpenMonthlyMerchants] = usePersistedBool(
+    "sphere:flow:open:monthly:merchants",
+    false
+  );
+  const [openMonthlySectors, setOpenMonthlySectors] = usePersistedBool(
+    "sphere:flow:open:monthly:sectors",
+    false
+  );
+
+  // Signals explained (triangle only)
+  const [openSignalsExplained, setOpenSignalsExplained] = usePersistedBool(
+    "sphere:flow:open:signalsExplained",
+    false
+  );
+
+  const showMonthly = section === "all" || section === "monthly";
+  const showPulse = section === "all" || section === "pulse";
+  const showAlign = section === "all" || section === "alignment";
 
   // Load admin-fed community file
   useEffect(() => {
@@ -187,7 +217,7 @@ export default function MonthlyFlow({
       .filter((x) => x.ticker && x.sector && Number.isFinite(x.count));
   }, [communityItems]);
 
-  // Map ticker -> "best" record (highest count)
+  // Map ticker -> best record (highest count)
   const communityByTicker = useMemo(() => {
     const map = new Map();
     for (const x of normalizedCommunity) {
@@ -215,7 +245,6 @@ export default function MonthlyFlow({
 
   const narrativeHighestSector = useMemo(() => communityTopSectors[0] || "—", [communityTopSectors]);
 
-  // “Top 10 Merchants (Community)” == top tickers by aggregate count
   const top10CommunityMerchants = useMemo(() => {
     const sorted = [...normalizedCommunity].sort((a, b) => b.count - a.count);
     const chosen = [];
@@ -226,24 +255,36 @@ export default function MonthlyFlow({
       chosen.push(x);
       seen.add(x.ticker);
     }
-    return chosen;
+    // alphabetize by sector, then ticker (your latest rule)
+    return chosen.sort((a, b) => {
+      const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
+      if (s !== 0) return s;
+      return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
+    });
   }, [normalizedCommunity]);
 
-  // Top 10 Community Runners (2-per-sector preferred, fill to 10, alpha sort by sector->ticker)
+  // Community runners (kept; 2-per-sector enforcement lives elsewhere)
   const top10CommunityRunners = useMemo(() => {
     const topSet = new Set(communityTopSectors);
     const preferred = normalizedCommunity.filter((x) => topSet.has(x.sector));
     const pool = preferred.length ? preferred : normalizedCommunity;
 
-    const sortedByCount = [...pool].sort((a, b) => b.count - a.count);
+    const sorted = [...pool].sort((a, b) => b.count - a.count);
+    const chosen = [];
+    const seen = new Set();
 
-    return pickTop10WithTwoPerSector({
-      items: sortedByCount,
-      topSectors: communityTopSectors,
-      getSector: (x) => x.sector,
-      getTicker: (x) => x.ticker,
-      maxTotal: 10,
-      maxPerTopSector: 2
+    for (const x of sorted) {
+      if (chosen.length >= 10) break;
+      if (!x.ticker || seen.has(x.ticker)) continue;
+      chosen.push(x);
+      seen.add(x.ticker);
+    }
+
+    // Alphabetize display by sector, then ticker
+    return chosen.sort((a, b) => {
+      const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
+      if (s !== 0) return s;
+      return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
     });
   }, [normalizedCommunity, communityTopSectors]);
 
@@ -261,9 +302,7 @@ export default function MonthlyFlow({
       setLeadersLoading(true);
       try {
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
-        const json = await fetchJsonStrict(
-          `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
-        );
+        const json = await fetchJsonStrict(`/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`);
         const items = Array.isArray(json.items) ? json.items : [];
         items.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
         const top5 = items.slice(0, 5).map((x) => ({
@@ -281,10 +320,7 @@ export default function MonthlyFlow({
     run();
   }, []);
 
-  const asOf = useMemo(
-    () => maxDate(sectorLeaders.map((x) => x.latestDate).filter(Boolean)),
-    [sectorLeaders]
-  );
+  const asOf = useMemo(() => maxDate(sectorLeaders.map((x) => x.latestDate).filter(Boolean)), [sectorLeaders]);
 
   // ---------- Alignment inputs ----------
   const userSpend = useMemo(() => {
@@ -299,12 +335,9 @@ export default function MonthlyFlow({
       .filter(Boolean);
   }, [userRunners]);
 
-  // "Community spend tickers" = tickers that appear within the top community spend sectors
   const communitySpendTickers = useMemo(() => {
     const topSet = new Set(communityTopSectors);
-    const tickers = normalizedCommunity
-      .filter((x) => topSet.has(x.sector))
-      .map((x) => x.ticker);
+    const tickers = normalizedCommunity.filter((x) => topSet.has(x.sector)).map((x) => x.ticker);
     return Array.from(new Set(tickers)).sort();
   }, [normalizedCommunity, communityTopSectors]);
 
@@ -332,7 +365,6 @@ export default function MonthlyFlow({
     [userRunnersTickers, communityRunnerTickers]
   );
 
-  // Sector leader names (ETF proxies)
   const leaderNames = useMemo(() => {
     return new Set(
       (Array.isArray(sectorLeaders) ? sectorLeaders : [])
@@ -383,256 +415,315 @@ export default function MonthlyFlow({
     });
   }, [userSpend, communityByTicker, communitySpendTickers, communityRunnerTickers, leaderNames]);
 
-  const showMonthly = section === "all" || section === "monthly";
-  const showPulse = section === "all" || section === "pulse";
-  const showAlign = section === "all" || section === "alignment";
+  // In embedded mode, parent <Section> controls collapse, so always render the body.
+  const allowMonthlyBody = embedded ? true : openMonthly;
+  const allowPulseBody = embedded ? true : openPulse;
+  const allowAlignBody = embedded ? true : openAlign;
 
   return (
-    <div>
+    <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       {flowError ? (
         <div
           style={{
             marginBottom: "0.9rem",
             padding: "0.75rem",
             background: "#fff1f1",
-            border: "1px solid #ffd4d4"
+            border: "1px solid #ffd4d4",
+            borderRadius: UI.RADIUS_SOFT,
+            fontSize: UI.FONT_BODY
           }}
         >
           <b>Flow feed error:</b>
-          <div style={{ marginTop: "0.25rem", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>
-            {flowError}
-          </div>
+          <div style={{ marginTop: "0.25rem", fontSize: UI.FONT_BODY, whiteSpace: "pre-wrap" }}>{flowError}</div>
         </div>
       ) : null}
 
+      {/* MONTHLY */}
       {showMonthly ? (
         <div>
-          <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-            Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate
-            trends — admin fed.
-          </p>
+          {!embedded ? (
+            <SectionBand title="Monthly Flow (Paid • Preview)" open={openMonthly} onToggle={() => setOpenMonthly((v) => !v)} />
+          ) : null}
 
-          <p style={{ fontSize: "0.95rem", marginBottom: "0.5rem" }}>
-            This month, the highest concentration of community spending was in <b>{narrativeHighestSector}</b>.
-          </p>
+          {allowMonthlyBody ? (
+            <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
+              <p style={{ marginTop: 0, fontSize: UI.FONT_BODY }}>
+                Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide
+                aggregate trends — admin fed.
+              </p>
 
-          <h4 style={{ marginTop: "1rem", marginBottom: "0.25rem" }}>Top 10 Merchants (Community)</h4>
-          {top10CommunityMerchants.length ? (
-            <ol style={{ marginTop: "0.4rem" }}>
-              {top10CommunityMerchants.map((x) => (
-                <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
-                  <b>{x.ticker}</b> — <span style={{ fontSize: "0.92rem" }}>{x.sector}</span>{" "}
-                  <span style={{ fontSize: "0.9rem" }}>(Signal: {x.signal})</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p style={{ fontSize: "0.9rem" }}>
-              No community merchant data yet (admin aggregate feed not populated).
-            </p>
-          )}
+              <SummaryBand>
+                <b>Community insight:</b> This month, the highest concentration of community spending was in{" "}
+                <b>{narrativeHighestSector}</b>.
+              </SummaryBand>
 
-          <h4 style={{ marginTop: "1rem", marginBottom: "0.25rem" }}>Top Sectors (Community Spend)</h4>
-          {loading ? (
-            <p style={{ fontSize: "0.9rem" }}>Loading community feed…</p>
-          ) : communityTopSectors.length ? (
-            <ol style={{ marginTop: "0.4rem" }}>
-              {communityTopSectors.map((s) => (
-                <li key={s}>
-                  <b>{s}</b>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p style={{ fontSize: "0.9rem" }}>
-              No community sectors shown yet (admin aggregate feed not populated).
-            </p>
-          )}
-        </div>
-      ) : null}
+              <SubHeaderRow
+                title="Top 10 Merchants (Community)"
+                open={openMonthlyMerchants}
+                onToggle={() => setOpenMonthlyMerchants((v) => !v)}
+              />
 
-      {showPulse ? (
-        <div style={{ marginTop: section === "all" ? "1rem" : 0 }}>
-          <h4 style={{ margin: "0.5rem 0 0.25rem 0" }}>Top 5 Sector Leaders (30D) — ETF Proxies</h4>
-          <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-            <b>As of:</b> {asOf || "—"} {leadersLoading ? "(Loading…)" : ""}
-          </p>
-
-          {sectorLeaders.length ? (
-            <ol style={{ marginTop: "0.4rem" }}>
-              {sectorLeaders.map((x) => (
-                <li key={x.ticker}>
-                  <b>{x.sectorName}</b> ({x.ticker}): <b>{pct(x.return30d)}</b>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p style={{ fontSize: "0.9rem" }}>No sector leader data yet.</p>
-          )}
-
-          <h4 style={{ marginTop: "0.9rem" }}>
-            Top 10 Runners (30D) — Based on Community Top Spend Sectors
-          </h4>
-
-          {top10CommunityRunners.length ? (
-            <ol style={{ marginTop: "0.4rem" }}>
-              {top10CommunityRunners.map((x) => (
-                <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
-                  <b>{x.sector}</b> — {x.ticker}{" "}
-                  <span style={{ fontSize: "0.9rem" }}>(Signal: {x.signal})</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p style={{ fontSize: "0.9rem" }}>
-              No community runners shown yet (admin aggregate feed not populated).
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {showAlign ? (
-        <div style={{ marginTop: section === "all" ? "1rem" : 0 }}>
-          <p style={{ marginTop: 0 }}>
-            This snapshot flags where your spend tickers overlap with (a) community spend sector tickers and/or (b)
-            community runners — using the community <b>signal</b> feed (count + signal line).
-          </p>
-
-          <div style={{ marginTop: "0.25rem", fontSize: "0.9rem" }}>
-            <div style={{ marginBottom: "0.6rem" }}>
-              <b>A) Your Spend Tickers ↔ Community Spend Tickers</b>
-              <div style={{ marginTop: "0.25rem" }}>
-                Overlap: <b>{alignSpendVsCommunitySpend.length}</b>{" "}
-                {alignSpendVsCommunitySpend.length ? `(${alignSpendVsCommunitySpend.join(", ")})` : "(—)"}
-              </div>
-            </div>
-
-            <div style={{ marginBottom: "0.6rem" }}>
-              <b>B) Your Spend Tickers ↔ Community Runners</b>
-              <div style={{ marginTop: "0.25rem" }}>
-                Overlap: <b>{alignSpendVsCommunityRunners.length}</b>{" "}
-                {alignSpendVsCommunityRunners.length ? `(${alignSpendVsCommunityRunners.join(", ")})` : "(—)"}
-              </div>
-            </div>
-
-            <div>
-              <b>Overlap with Your Personal Runners</b>
-              <div style={{ marginTop: "0.25rem" }}>
-                Overlap (Drip runners ↔ Flow runners): <b>{overlapPersonalVsFlowRunners.length}</b>{" "}
-                {overlapPersonalVsFlowRunners.length ? `(${overlapPersonalVsFlowRunners.join(", ")})` : "(—)"}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.92rem" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>#</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Ticker</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {robustFlowRows.map((r) => (
-                  <tr key={r.ticker}>
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.idx}</td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                      <b>{r.ticker}</b>
-                    </td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.sectorBucket}</td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                      <div><b>{r.signalRaw}</b></div>
-                      {r.signalParts.length ? (
-                        <div style={{ fontSize: "0.86rem", marginTop: 4, opacity: 0.9 }}>
-                          {r.signalParts.map((p) => (
-                            <div key={p}>• {p}</div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: "0.86rem", marginTop: 4, opacity: 0.75 }}>
-                          No signal line available for this ticker in the community feed.
-                        </div>
-                      )}
-                    </td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                      {r.count === null ? "—" : <b>{r.count}</b>}
-                    </td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.etfSector}</td>
-
-                    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                      <div><b>Leader:</b> {r.flags.leader ? "Yes" : "No"}</div>
-                      <div><b>Community spend:</b> {r.flags.communitySpend ? "Yes" : "No"}</div>
-                      <div><b>Runner:</b> {r.flags.runner ? "Yes" : "No"}</div>
-                      <div><b>Trigger:</b> {r.flags.trigger}</div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
-              Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders (market function).
-              Informational only — not recommendations.
-            </div>
-          </div>
-
-          {/* Toggle ONLY applies to Signals explained */}
-          <div style={{ marginTop: "0.9rem" }}>
-            <button
-              onClick={() => setShowSignalsExplainer((v) => !v)}
-              style={{
-                padding: "0.45rem 0.7rem",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                cursor: "pointer"
-              }}
-            >
-              {showSignalsExplainer ? "Hide signals explained" : "Show signals explained"}
-            </button>
-          </div>
-
-          {showSignalsExplainer ? (
-            <div style={{ marginTop: "0.9rem", padding: "0.75rem", background: "#f6f6f6" }}>
-              <b>Signals explained (preview):</b>
-              <div style={{ marginTop: "0.5rem", fontSize: "0.9rem" }}>
-                <div style={{ marginBottom: "0.5rem" }}>
-                  When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
-                </div>
-
-                <ul style={{ marginTop: 0 }}>
-                  {SIGNAL_EXPLAINER_PREVIEW.map((x) => (
-                    <li key={x.title} style={{ marginBottom: "0.35rem" }}>
-                      <b>{x.title}</b>: {x.body}
+              {!top10CommunityMerchants.length ? (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
+                  No community merchant data yet (admin aggregate feed not populated).
+                </p>
+              ) : openMonthlyMerchants ? (
+                <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
+                  {top10CommunityMerchants.map((x) => (
+                    <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
+                      <b>{x.sector}</b> — {x.ticker}{" "}
+                      <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
                     </li>
                   ))}
-                </ul>
+                </ol>
+              ) : null}
 
-                <div style={{ marginTop: "0.75rem" }}>
-                  <b>How to read the full Signal line:</b>
-                  <div style={{ marginTop: "0.25rem" }}>{SIGNAL_LINE_READER}</div>
+              <SubHeaderRow
+                title="Top Sectors (Community Spend)"
+                open={openMonthlySectors}
+                onToggle={() => setOpenMonthlySectors((v) => !v)}
+              />
+
+              {loading ? (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading community feed…</p>
+              ) : !communityTopSectors.length ? (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
+                  No community sectors shown yet (admin aggregate feed not populated).
+                </p>
+              ) : openMonthlySectors ? (
+                <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
+                  {[...communityTopSectors]
+                    .slice()
+                    .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base" }))
+                    .map((s) => (
+                      <li key={s} style={{ marginBottom: "0.25rem" }}>
+                        <b>{s}</b>
+                      </li>
+                    ))}
+                </ol>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* PULSE */}
+      {showPulse ? (
+        <div style={{ marginTop: embedded ? 0 : "1rem" }}>
+          {!embedded ? (
+            <SectionBand title="Market Pulse (Trailing 30 Days)" open={openPulse} onToggle={() => setOpenPulse((v) => !v)} />
+          ) : null}
+
+          {allowPulseBody ? (
+            <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
+              <SummaryBand>
+                <b>As of:</b> {asOf || "—"} {leadersLoading ? "(Loading…)" : ""}
+              </SummaryBand>
+
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 800, marginTop: "0.25rem" }}>
+                Top 5 Sector Leaders (30D) — ETF Proxies
+              </div>
+
+              {sectorLeaders.length ? (
+                <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
+                  {sectorLeaders
+                    .slice()
+                    .sort((a, b) =>
+                      String(a.sectorName || "").localeCompare(String(b.sectorName || ""), undefined, {
+                        sensitivity: "base"
+                      })
+                    )
+                    .map((x) => (
+                      <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
+                        <b>{x.sectorName}</b> ({x.ticker}): <b>{pct(x.return30d)}</b>
+                      </li>
+                    ))}
+                </ol>
+              ) : (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>No sector leader data yet.</p>
+              )}
+
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 800, marginTop: "1rem" }}>
+                Top 10 Runners (30D) — Based on Community Top Spend Sectors
+              </div>
+
+              {top10CommunityRunners.length ? (
+                <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
+                  {top10CommunityRunners.map((x) => (
+                    <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
+                      <b>{x.sector}</b> — {x.ticker}{" "}
+                      <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
+                  No community runners shown yet (admin aggregate feed not populated).
+                </p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ALIGNMENT */}
+      {showAlign ? (
+        <div style={{ marginTop: embedded ? 0 : "1rem" }}>
+          {!embedded ? (
+            <SectionBand title="Alignment Snapshot (Flow)" open={openAlign} onToggle={() => setOpenAlign((v) => !v)} />
+          ) : null}
+
+          {allowAlignBody ? (
+            <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
+              <SummaryBand>
+                This snapshot flags where your spend tickers overlap with (a) community spend sector tickers and/or (b)
+                community runners — using the community <b>signal</b> feed (count + signal line).
+              </SummaryBand>
+
+              <div style={{ fontSize: UI.FONT_BODY }}>
+                <div style={{ marginBottom: "0.6rem" }}>
+                  <b>A) Your Spend Tickers ↔ Community Spend Tickers</b>
+                  <div style={{ marginTop: "0.25rem" }}>
+                    Overlap: <b>{alignSpendVsCommunitySpend.length}</b>{" "}
+                    {alignSpendVsCommunitySpend.length ? `(${alignSpendVsCommunitySpend.join(", ")})` : "(—)"}
+                  </div>
                 </div>
 
-                <div style={{ marginTop: "0.75rem" }}>
-                  <b>Additional signal tags you may see in this demo:</b>
-                  <ul style={{ marginTop: "0.35rem" }}>
-                    {EXTRA_SIGNALS.map((x) => (
+                <div style={{ marginBottom: "0.6rem" }}>
+                  <b>B) Your Spend Tickers ↔ Community Runners</b>
+                  <div style={{ marginTop: "0.25rem" }}>
+                    Overlap: <b>{alignSpendVsCommunityRunners.length}</b>{" "}
+                    {alignSpendVsCommunityRunners.length ? `(${alignSpendVsCommunityRunners.join(", ")})` : "(—)"}
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: "0.2rem" }}>
+                  <b>Overlap with Your Personal Runners</b>
+                  <div style={{ marginTop: "0.25rem" }}>
+                    Overlap (Drip runners ↔ Flow runners): <b>{overlapPersonalVsFlowRunners.length}</b>{" "}
+                    {overlapPersonalVsFlowRunners.length ? `(${overlapPersonalVsFlowRunners.join(", ")})` : "(—)"}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: UI.FONT_BODY }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>#</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Ticker</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>
+                        Sector Leader Proxy
+                      </th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {robustFlowRows.map((r) => (
+                      <tr key={r.ticker}>
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.idx}</td>
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+                          <b>{r.ticker}</b>
+                        </td>
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.sectorBucket}</td>
+
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+                          <div>
+                            <b>{r.signalRaw}</b>
+                          </div>
+                          {r.signalParts.length ? (
+                            <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.9 }}>
+                              {r.signalParts.map((p) => (
+                                <div key={p}>• {p}</div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.75 }}>
+                              No signal line available for this ticker in the community feed.
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+                          {r.count === null ? "—" : <b>{r.count}</b>}
+                        </td>
+
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.etfSector}</td>
+
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+                          <div>
+                            <b>Leader:</b> {r.flags.leader ? "Yes" : "No"}
+                          </div>
+                          <div>
+                            <b>Community spend:</b> {r.flags.communitySpend ? "Yes" : "No"}
+                          </div>
+                          <div>
+                            <b>Runner:</b> {r.flags.runner ? "Yes" : "No"}
+                          </div>
+                          <div>
+                            <b>Trigger:</b> {r.flags.trigger}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
+                  Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders
+                  (market function). Informational only — not recommendations.
+                </div>
+              </div>
+
+              <SubHeaderRow
+                title="Signals explained (preview)"
+                open={openSignalsExplained}
+                onToggle={() => setOpenSignalsExplained((v) => !v)}
+              />
+
+              {openSignalsExplained ? (
+                <div
+                  style={{
+                    marginTop: "0.6rem",
+                    padding: "0.75rem",
+                    background: UI.BAND_BG,
+                    borderRadius: UI.RADIUS_SOFT,
+                    border: `1px solid ${UI.SOFT_BORDER}`,
+                    fontSize: UI.FONT_BODY
+                  }}
+                >
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
+                  </div>
+
+                  <ul style={{ marginTop: 0 }}>
+                    {SIGNAL_EXPLAINER_PREVIEW.map((x) => (
                       <li key={x.title} style={{ marginBottom: "0.35rem" }}>
                         <b>{x.title}</b>: {x.body}
                       </li>
                     ))}
                   </ul>
+
+                  <div style={{ marginTop: "0.75rem" }}>
+                    <b>How to read the full Signal line:</b>
+                    <div style={{ marginTop: "0.25rem" }}>{SIGNAL_LINE_READER}</div>
+                  </div>
+
+                  <div style={{ marginTop: "0.75rem" }}>
+                    <b>Additional signal tags you may see in this demo:</b>
+                    <ul style={{ marginTop: "0.35rem" }}>
+                      {EXTRA_SIGNALS.map((x) => (
+                        <li key={x.title} style={{ marginBottom: "0.35rem" }}>
+                          <b>{x.title}</b>: {x.body}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           ) : null}
         </div>

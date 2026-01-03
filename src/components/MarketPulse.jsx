@@ -230,8 +230,7 @@ export default function MarketPulse({
 
   return (
     <div style={{ marginTop: "1rem" }}>
-      <h3 style={{ marginBottom: "0.25rem" }}>Market Pulse (Trailing 30 Days)</h3>
-      <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
+         <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
         <b>As of:</b> {asOf || "—"} {loading ? "(Loading…)" : ""}
       </p>
 

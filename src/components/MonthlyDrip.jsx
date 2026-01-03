@@ -1,5 +1,6 @@
 // FILE: src/components/MonthlyDrip.jsx
 import { useEffect, useMemo, useState } from "react";
+import { UI, SummaryBand, SubHeaderRow, TextLink } from "./SectionUI";
 
 function money(n) {
   const v = Number(n);
@@ -8,20 +9,21 @@ function money(n) {
 }
 
 /**
- * MonthlyDrip
- * - Shows user’s top merchants and top sectors (spend)
- * - Top 10 Merchants appears ABOVE Top Sectors
- * - Headline line:
- *   “This month, the highest concentration of your spending was in X.”
- * - Option A: Top Sectors (Spend) computed from ALL transactions (not only top merchants)
- * - Includes two toggles:
- *   - Merchants: Show all / Show top 10
- *   - Sectors: Show all / Show top 5
- * - DOES NOT include Alignment Snapshot (Drip) anymore (Alignment is its own section in Home)
+ * MonthlyDrip (UX-consistent)
+ * - Merchants ABOVE sectors
+ * - Option A: sector totals computed from ALL transactions
+ * - Triangle toggle only for expand/collapse
+ * - “Show all / Show top N” remains a subtle TextLink
+ * - Typography + spacing from SectionUI (no logic changes)
  */
 export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
   const txs = useMemo(() => (Array.isArray(transactions) ? transactions : []), [transactions]);
 
+  // Expand/collapse (triangle)
+  const [openMerchants, setOpenMerchants] = useState(false);
+  const [openSectors, setOpenSectors] = useState(false);
+
+  // Keep your “show all” capability (text link)
   const [showAllMerchants, setShowAllMerchants] = useState(false);
   const [showAllSectors, setShowAllSectors] = useState(false);
 
@@ -89,10 +91,7 @@ export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
   }, [txs]);
 
   const top5Sectors = useMemo(() => allSectors.slice(0, 5), [allSectors]);
-
-  const highestSector = useMemo(() => {
-    return top5Sectors?.[0]?.sector || "—";
-  }, [top5Sectors]);
+  const highestSector = useMemo(() => top5Sectors?.[0]?.sector || "—", [top5Sectors]);
 
   // Keep the existing contract: notify parent of TOP 5 sectors only
   useEffect(() => {
@@ -104,68 +103,96 @@ export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
   const merchantsToShow = showAllMerchants ? allMerchants : top10Merchants;
   const sectorsToShow = showAllSectors ? allSectors : top5Sectors;
 
+  // Totals (logic unchanged)
+  const totalSpend = useMemo(() => {
+    let sum = 0;
+    for (const tx of txs) {
+      const amount = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
+      if (!Number.isFinite(amount)) continue;
+      sum += amount;
+    }
+    return sum;
+  }, [txs]);
+
+  const topMerchantTotal = useMemo(() => {
+    return top10Merchants.reduce((acc, x) => acc + (Number.isFinite(x.amount) ? x.amount : 0), 0);
+  }, [top10Merchants]);
+
+  const topSectorTotal = useMemo(() => {
+    return top5Sectors.reduce((acc, x) => acc + (Number.isFinite(x.amount) ? x.amount : 0), 0);
+  }, [top5Sectors]);
+
   return (
-    <div>
-      <p style={{ marginTop: 0 }}>
+    <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
+      <p style={{ marginTop: 0, fontSize: UI.FONT_BODY }}>
         Monthly Drip summarizes your spending patterns from the uploaded transactions.
       </p>
 
-      <p style={{ fontSize: "0.95rem" }}>
-        This month, the highest concentration of your spending was in <b>{highestSector}</b>.
-      </p>
+      <SummaryBand>
+        <div style={{ fontSize: UI.FONT_BODY }}>
+          <b>Spending insight:</b> Most of your spending clustered in <b>{highestSector}</b>.
+        </div>
+        <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+          Total spend: <b>{money(totalSpend)}</b> · Top 10 merchants: <b>{money(topMerchantTotal)}</b> · Top 5 sectors:{" "}
+          <b>{money(topSectorTotal)}</b>
+        </div>
+      </SummaryBand>
 
-      {/* Merchants ABOVE sectors */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <h4 style={{ marginTop: "1rem", marginBottom: "0.25rem" }}>Top 10 Merchants (Spend)</h4>
+      {/* =======================
+          TOP MERCHANTS
+         ======================= */}
+      <SubHeaderRow
+        title="Top 10 Merchants (Spend)"
+        open={openMerchants}
+        onToggle={() => setOpenMerchants((v) => !v)}
+        rightSlot={
+          allMerchants.length > 10 ? (
+            <TextLink onClick={() => setShowAllMerchants((v) => !v)}>
+              {showAllMerchants ? "Show top 10" : "Show all"}
+            </TextLink>
+          ) : null
+        }
+      />
 
-        {allMerchants.length > 10 ? (
-          <button
-            type="button"
-            onClick={() => setShowAllMerchants((v) => !v)}
-            style={{ padding: "0.25rem 0.5rem" }}
-          >
-            {showAllMerchants ? "Show top 10" : "Show all"}
-          </button>
-        ) : null}
-      </div>
-
-      {merchantsToShow.length ? (
-        <ol style={{ marginTop: "0.5rem" }}>
+      {!allMerchants.length ? (
+        <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Upload transactions to populate merchants.</p>
+      ) : openMerchants ? (
+        <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
           {merchantsToShow.map((x) => (
-            <li key={x.merchant}>
+            <li key={x.merchant} style={{ marginBottom: "0.25rem" }}>
               <b>{x.merchant}</b> — {money(x.amount)}
             </li>
           ))}
         </ol>
-      ) : (
-        <p style={{ fontSize: "0.9rem" }}>Upload transactions to populate merchants.</p>
-      )}
+      ) : null}
 
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-        <h4 style={{ marginTop: "1rem", marginBottom: "0.25rem" }}>Top Sectors (Spend)</h4>
+      {/* =======================
+          TOP SECTORS
+         ======================= */}
+      <SubHeaderRow
+        title="Top Sectors (Spend)"
+        open={openSectors}
+        onToggle={() => setOpenSectors((v) => !v)}
+        rightSlot={
+          allSectors.length > 5 ? (
+            <TextLink onClick={() => setShowAllSectors((v) => !v)}>
+              {showAllSectors ? "Show top 5" : "Show all"}
+            </TextLink>
+          ) : null
+        }
+      />
 
-        {allSectors.length > 5 ? (
-          <button
-            type="button"
-            onClick={() => setShowAllSectors((v) => !v)}
-            style={{ padding: "0.25rem 0.5rem" }}
-          >
-            {showAllSectors ? "Show top 5" : "Show all"}
-          </button>
-        ) : null}
-      </div>
-
-      {sectorsToShow.length ? (
-        <ol style={{ marginTop: "0.5rem" }}>
+      {!allSectors.length ? (
+        <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Upload transactions to populate sectors.</p>
+      ) : openSectors ? (
+        <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
           {sectorsToShow.map((x) => (
-            <li key={x.sector}>
+            <li key={x.sector} style={{ marginBottom: "0.25rem" }}>
               <b>{x.sector}</b> — {money(x.amount)}
             </li>
           ))}
         </ol>
-      ) : (
-        <p style={{ fontSize: "0.9rem" }}>Upload transactions to populate sectors.</p>
-      )}
+      ) : null}
     </div>
   );
 }
