@@ -192,3 +192,70 @@ export function TextLink({ children, onClick, title = "Toggle list length" }) {
     </span>
   );
 }
+
+/* ===========================
+   Visual emphasis primitives
+   =========================== */
+
+export function Badge({ children, tone = "neutral" }) {
+  const tones = {
+    neutral: { bg: "#f4f4f5", fg: "#111827", border: "#e5e7eb" },
+    good: { bg: "#ecfdf5", fg: "#065f46", border: "#a7f3d0" },
+    bad: { bg: "#fef2f2", fg: "#991b1b", border: "#fecaca" },
+    info: { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe" },
+    warn: { bg: "#fffbeb", fg: "#92400e", border: "#fde68a" }
+  };
+  const t = tones[tone] || tones.neutral;
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: 12,
+        background: t.bg,
+        color: t.fg,
+        border: `1px solid ${t.border}`,
+        fontWeight: 800,
+        lineHeight: 1.3,
+        whiteSpace: "nowrap"
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function Trend({
+  value,
+  formatter = (v) => String(v),
+  showArrow = true
+}) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return <span style={{ color: "#6b7280" }}>—</span>;
+  }
+  const v = Number(value);
+  const up = v > 0;
+  const down = v < 0;
+  const tone = up ? "good" : down ? "bad" : "neutral";
+  const arrow = up ? "▲" : down ? "▼" : "•";
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      {showArrow ? <Badge tone={tone}>{arrow}</Badge> : null}
+      <span style={{ fontWeight: 900 }}>{formatter(v)}</span>
+    </span>
+  );
+}
+
+export function MiniStat({ label, value }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>{label}</div>
+      <div style={{ fontSize: UI.FONT_BODY, fontWeight: 900 }}>{value}</div>
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 // FILE: src/components/MonthlyFlow.jsx
 import { useEffect, useMemo, useState } from "react";
-import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool } from "./SectionUI";
+import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool, Badge, MiniStat } from "./SectionUI";
 
 function pct(n) {
   if (n === null || n === undefined) return "—";
@@ -141,6 +141,12 @@ function splitSignalLine(signal) {
     .map((x) => x.trim())
     .filter(Boolean);
   return { raw: s, parts };
+}
+
+function scoreTone(score) {
+  if (score >= 70) return { tone: "good", label: "High match" };
+  if (score >= 40) return { tone: "info", label: "Medium match" };
+  return { tone: "neutral", label: "Low match" };
 }
 
 export default function MonthlyFlow({
@@ -420,6 +426,34 @@ export default function MonthlyFlow({
   const allowPulseBody = embedded ? true : openPulse;
   const allowAlignBody = embedded ? true : openAlign;
 
+  // Simple, transparent “alignment score” from existing overlaps (no new data):
+  // - Spend↔CommunitySpend overlap counts 40%
+  // - Spend↔CommunityRunners overlap counts 40%
+  // - PersonalRunners↔FlowRunners overlap counts 20%
+  const alignmentScore = useMemo(() => {
+    const a = alignSpendVsCommunitySpend.length;
+    const b = alignSpendVsCommunityRunners.length;
+    const c = overlapPersonalVsFlowRunners.length;
+
+    const aMax = Math.max(1, Math.min(userSpend.length || 1, 10));
+    const bMax = Math.max(1, Math.min(userSpend.length || 1, 10));
+    const cMax = Math.max(1, Math.min(userRunnersTickers.length || 1, 10));
+
+    const s1 = Math.min(1, a / aMax);
+    const s2 = Math.min(1, b / bMax);
+    const s3 = Math.min(1, c / cMax);
+
+    return Math.round((0.4 * s1 + 0.4 * s2 + 0.2 * s3) * 100);
+  }, [
+    alignSpendVsCommunitySpend.length,
+    alignSpendVsCommunityRunners.length,
+    overlapPersonalVsFlowRunners.length,
+    userSpend.length,
+    userRunnersTickers.length
+  ]);
+
+  const scoreMeta = useMemo(() => scoreTone(alignmentScore), [alignmentScore]);
+
   return (
     <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       {flowError ? (
@@ -433,7 +467,10 @@ export default function MonthlyFlow({
             fontSize: UI.FONT_BODY
           }}
         >
-          <b>Flow feed error:</b>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <b>Flow feed error</b>
+            <Badge tone="bad">Blocked</Badge>
+          </div>
           <div style={{ marginTop: "0.25rem", fontSize: UI.FONT_BODY, whiteSpace: "pre-wrap" }}>{flowError}</div>
         </div>
       ) : null}
@@ -442,7 +479,11 @@ export default function MonthlyFlow({
       {showMonthly ? (
         <div>
           {!embedded ? (
-            <SectionBand title="Monthly Flow (Paid • Preview)" open={openMonthly} onToggle={() => setOpenMonthly((v) => !v)} />
+            <SectionBand
+              title="Monthly Flow (Paid • Preview)"
+              open={openMonthly}
+              onToggle={() => setOpenMonthly((v) => !v)}
+            />
           ) : null}
 
           {allowMonthlyBody ? (
@@ -453,8 +494,19 @@ export default function MonthlyFlow({
               </p>
 
               <SummaryBand>
-                <b>Community insight:</b> This month, the highest concentration of community spending was in{" "}
-                <b>{narrativeHighestSector}</b>.
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <b>Community insight:</b> This month, the highest concentration of community spending was in{" "}
+                    <b>{narrativeHighestSector}</b>.
+                  </div>
+                  <Badge tone="info">Community</Badge>
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                  <MiniStat label="Top sectors shown" value={communityTopSectors.length || "—"} />
+                  <MiniStat label="Merchants shown" value={top10CommunityMerchants.length || "—"} />
+                  <MiniStat label="Runners shown" value={top10CommunityRunners.length || "—"} />
+                </div>
               </SummaryBand>
 
               <SubHeaderRow
@@ -470,9 +522,12 @@ export default function MonthlyFlow({
               ) : openMonthlyMerchants ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
                   {top10CommunityMerchants.map((x) => (
-                    <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
-                      <b>{x.sector}</b> — {x.ticker}{" "}
-                      <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                    <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <b>{x.sector}</b> — <b>{x.ticker}</b>
+                        <Badge tone="neutral">Merchant proxy</Badge>
+                        <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                      </div>
                     </li>
                   ))}
                 </ol>
@@ -496,8 +551,11 @@ export default function MonthlyFlow({
                     .slice()
                     .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base" }))
                     .map((s) => (
-                      <li key={s} style={{ marginBottom: "0.25rem" }}>
-                        <b>{s}</b>
+                      <li key={s} style={{ marginBottom: "0.35rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <b>{s}</b>
+                          <Badge tone="info">Top 5</Badge>
+                        </div>
                       </li>
                     ))}
                 </ol>
@@ -511,17 +569,32 @@ export default function MonthlyFlow({
       {showPulse ? (
         <div style={{ marginTop: embedded ? 0 : "1rem" }}>
           {!embedded ? (
-            <SectionBand title="Market Pulse (Trailing 30 Days)" open={openPulse} onToggle={() => setOpenPulse((v) => !v)} />
+            <SectionBand
+              title="Market Pulse (Trailing 30 Days)"
+              open={openPulse}
+              onToggle={() => setOpenPulse((v) => !v)}
+            />
           ) : null}
 
           {allowPulseBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <SummaryBand>
-                <b>As of:</b> {asOf || "—"} {leadersLoading ? "(Loading…)" : ""}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <b>As of:</b> {asOf || "—"} {leadersLoading ? " (Loading…)" : ""}
+                  </div>
+                  <Badge tone="neutral">30D</Badge>
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                  <MiniStat label="Sector leaders" value={sectorLeaders.length || "—"} />
+                  <MiniStat label="Community runners" value={top10CommunityRunners.length || "—"} />
+                </div>
               </SummaryBand>
 
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 800, marginTop: "0.25rem" }}>
-                Top 5 Sector Leaders (30D) — ETF Proxies
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
+                Top 5 Sector Leaders (30D){" "}
+                <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
               </div>
 
               {sectorLeaders.length ? (
@@ -534,8 +607,12 @@ export default function MonthlyFlow({
                       })
                     )
                     .map((x) => (
-                      <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
-                        <b>{x.sectorName}</b> ({x.ticker}): <b>{pct(x.return30d)}</b>
+                      <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <b>{x.sectorName}</b> <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
+                          <Badge tone="good">Leader</Badge>
+                          <span style={{ fontWeight: 900 }}>{pct(x.return30d)}</span>
+                        </div>
                       </li>
                     ))}
                 </ol>
@@ -543,16 +620,22 @@ export default function MonthlyFlow({
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>No sector leader data yet.</p>
               )}
 
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 800, marginTop: "1rem" }}>
-                Top 10 Runners (30D) — Based on Community Top Spend Sectors
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem" }}>
+                Top 10 Runners (30D){" "}
+                <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
+                  — based on community top spend sectors
+                </span>
               </div>
 
               {top10CommunityRunners.length ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
                   {top10CommunityRunners.map((x) => (
-                    <li key={x.ticker} style={{ marginBottom: "0.25rem" }}>
-                      <b>{x.sector}</b> — {x.ticker}{" "}
-                      <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                    <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <b>{x.sector}</b> — <b>{x.ticker}</b>
+                        <Badge tone="info">Runner</Badge>
+                        <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                      </div>
                     </li>
                   ))}
                 </ol>
@@ -570,14 +653,31 @@ export default function MonthlyFlow({
       {showAlign ? (
         <div style={{ marginTop: embedded ? 0 : "1rem" }}>
           {!embedded ? (
-            <SectionBand title="Alignment Snapshot (Flow)" open={openAlign} onToggle={() => setOpenAlign((v) => !v)} />
+            <SectionBand
+              title="Alignment Snapshot (Flow)"
+              open={openAlign}
+              onToggle={() => setOpenAlign((v) => !v)}
+            />
           ) : null}
 
           {allowAlignBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <SummaryBand>
-                This snapshot flags where your spend tickers overlap with (a) community spend sector tickers and/or (b)
-                community runners — using the community <b>signal</b> feed (count + signal line).
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <b>Alignment score:</b> <b>{alignmentScore}</b>/100{" "}
+                    <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+                      (based on overlap counts)
+                    </span>
+                  </div>
+                  <Badge tone={scoreMeta.tone}>{scoreMeta.label}</Badge>
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+                  <MiniStat label="Spend↔Community spend" value={alignSpendVsCommunitySpend.length} />
+                  <MiniStat label="Spend↔Community runners" value={alignSpendVsCommunityRunners.length} />
+                  <MiniStat label="Your runners↔Flow runners" value={overlapPersonalVsFlowRunners.length} />
+                </div>
               </SummaryBand>
 
               <div style={{ fontSize: UI.FONT_BODY }}>
@@ -631,9 +731,13 @@ export default function MonthlyFlow({
                         <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.sectorBucket}</td>
 
                         <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <b>{r.signalRaw}</b>
+                            {r.flags.runner ? <Badge tone="info">Runner</Badge> : null}
+                            {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : null}
+                            {r.flags.leader ? <Badge tone="good">Leader proxy</Badge> : null}
                           </div>
+
                           {r.signalParts.length ? (
                             <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.9 }}>
                               {r.signalParts.map((p) => (
@@ -651,20 +755,27 @@ export default function MonthlyFlow({
                           {r.count === null ? "—" : <b>{r.count}</b>}
                         </td>
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.etfSector}</td>
+                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span>{r.etfSector}</span>
+                            {r.flags.leader ? <Badge tone="good">Top 5 leader</Badge> : <Badge tone="neutral">—</Badge>}
+                          </div>
+                        </td>
 
                         <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div>
-                            <b>Leader:</b> {r.flags.leader ? "Yes" : "No"}
-                          </div>
-                          <div>
-                            <b>Community spend:</b> {r.flags.communitySpend ? "Yes" : "No"}
-                          </div>
-                          <div>
-                            <b>Runner:</b> {r.flags.runner ? "Yes" : "No"}
-                          </div>
-                          <div>
-                            <b>Trigger:</b> {r.flags.trigger}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              {r.flags.leader ? <Badge tone="good">Leader</Badge> : <Badge tone="neutral">Not leader</Badge>}
+                              {r.flags.communitySpend ? (
+                                <Badge tone="neutral">Community spend</Badge>
+                              ) : (
+                                <Badge tone="neutral">No spend</Badge>
+                              )}
+                              {r.flags.runner ? <Badge tone="info">Runner</Badge> : <Badge tone="neutral">Not runner</Badge>}
+                            </div>
+                            <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+                              <b>Trigger:</b> {r.flags.trigger}
+                            </div>
                           </div>
                         </td>
                       </tr>

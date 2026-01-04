@@ -1,4 +1,3 @@
-// FILE: src/components/MonthlyDrip.jsx
 import { useEffect, useMemo, useState } from "react";
 import { UI, SummaryBand, SubHeaderRow, TextLink } from "./SectionUI";
 
@@ -138,9 +137,6 @@ export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
         </div>
       </SummaryBand>
 
-      {/* =======================
-          TOP MERCHANTS
-         ======================= */}
       <SubHeaderRow
         title="Top 10 Merchants (Spend)"
         open={openMerchants}
@@ -166,9 +162,6 @@ export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
         </ol>
       ) : null}
 
-      {/* =======================
-          TOP SECTORS
-         ======================= */}
       <SubHeaderRow
         title="Top Sectors (Spend)"
         open={openSectors}
