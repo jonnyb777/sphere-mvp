@@ -1,2 +1,10 @@
-[functions]
-  directory = "netlify/functions"
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# Your React SPA routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

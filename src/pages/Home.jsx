@@ -55,8 +55,8 @@ export default function Home({ user }) {
 
   return (
     <PageShell
-      title="Sphere"
-      subtitle="Turn your daily spending into smart investing — preview only."
+      title="Sphere - Beta"
+      subtitle="Turn your daily spending into smart investing — informational only."
       rightSlot={
         <div style={{ display: "flex", gap: 10 }}>
           <Pill>{user?.email || "—"}</Pill>
