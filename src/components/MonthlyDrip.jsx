@@ -1,6 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { UI, SummaryBand, SubHeaderRow, TextLink } from "./SectionUI";
 
+function parseDateAny(tx) {
+  const raw =
+    tx.date ??
+    tx.Date ??
+    tx.posted_at ??
+    tx.PostedAt ??
+    tx.timestamp ??
+    tx.Timestamp ??
+    tx.transactionDate ??
+    tx.TransactionDate ??
+    null;
+
+  if (!raw) return null;
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function endOfMonth(dateISO) {
+  const dt = new Date(dateISO);
+  if (Number.isNaN(dt.getTime())) return null;
+  return new Date(dt.getFullYear(), dt.getMonth() + 1, 0, 23, 59, 59, 999);
+}
 function money(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
@@ -15,8 +38,26 @@ function money(n) {
  * - “Show all / Show top N” remains a subtle TextLink
  * - Typography + spacing from SectionUI (no logic changes)
  */
-export default function MonthlyDrip({ transactions, onTopSectorsChange }) {
-  const txs = useMemo(() => (Array.isArray(transactions) ? transactions : []), [transactions]);
+export default function MonthlyDrip({ transactions, onTopSectorsChange, timeframeDays = 30, asOfDate, timeMode = "trailing" }) {
+ const txs = useMemo(() => {
+  const arr = Array.isArray(transactions) ? transactions : [];
+  const iso = asOfDate || new Date().toISOString().slice(0, 10);
+
+  const asOf = new Date(iso);
+  if (Number.isNaN(asOf.getTime())) return arr;
+
+  const end = timeMode === "monthEnd" ? endOfMonth(iso) : new Date(iso);
+  if (!end) return arr;
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - Number(timeframeDays || 30));
+
+  return arr.filter((tx) => {
+    const dt = parseDateAny(tx);
+    if (!dt) return true; // keep undated for now (safer, less “where did my data go?”)
+    return dt >= start && dt <= end;
+  });
+}, [transactions, timeframeDays, asOfDate, timeMode]);
 
   // Expand/collapse (triangle)
   const [openMerchants, setOpenMerchants] = useState(false);

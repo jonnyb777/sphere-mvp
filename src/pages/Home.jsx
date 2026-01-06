@@ -8,7 +8,7 @@ import PaperPortfolio from "../components/PaperPortfolio";
 import AutoInvestPreview from "../components/AutoInvestPreview";
 import AlignmentSnapshotDrip from "../components/AlignmentSnapshotDrip";
 import { inferTickerFromMerchant } from "../utils/mappings";
-import { PageShell, Tabs, Card, Divider, Hint, Pill } from "../components/ui/UiKit";
+import { PageShell, Tabs, Card, Divider, Pill } from "../components/ui/UiKit";
 import { SectionBand, usePersistedBool } from "../components/SectionUI";
 
 function Section({ storageKey, label, defaultOpen = true, children }) {
@@ -17,7 +17,7 @@ function Section({ storageKey, label, defaultOpen = true, children }) {
   return (
     <div style={{ marginBottom: "1rem" }}>
       <Card>
-        <SectionBand title={label} open={open} onToggle={() => setOpen(v => !v)} />
+        <SectionBand title={label} open={open} onToggle={() => setOpen((v) => !v)} />
         {open ? <div style={{ marginTop: "0.75rem" }}>{children}</div> : null}
       </Card>
     </div>
@@ -26,6 +26,9 @@ function Section({ storageKey, label, defaultOpen = true, children }) {
 
 export default function Home({ user }) {
   const [activeTab, setActiveTab] = useState("drip");
+  const [timeframeDays, setTimeframeDays] = useState(30);
+  const [asOfDate, setAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [timeMode, setTimeMode] = useState("trailing"); // "trailing" | "monthEnd"
   const [transactions, setTransactions] = useState([]);
   const [topSpendSectors, setTopSpendSectors] = useState([]);
   const [availableTickers, setAvailableTickers] = useState([]);
@@ -73,6 +76,8 @@ export default function Home({ user }) {
         ]}
       />
 
+      {/* ✅ REMOVED: top-of-page <TimeframeControls /> duplication */}
+
       {/* DRIP */}
       {activeTab === "drip" && (
         <>
@@ -84,16 +89,27 @@ export default function Home({ user }) {
             <MonthlyDrip
               transactions={transactions}
               onTopSectorsChange={setTopSpendSectors}
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
             />
           </Section>
 
-          <Section label="Market Pulse (30D)" storageKey="home:pulse">
+          <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:pulse">
             <MarketPulse
               topSpendSectors={topSpendSectors}
-              onAddTicker={handleAddTickerToPaper}
+              transactions={transactions}
               onAvailableTickers={setAvailableTickers}
               onPersonalRunnersChange={setPersonalRunners}
               onSectorLeadersChange={setSectorLeaders}
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
+              setTimeframeDays={setTimeframeDays}
+              setAsOfDate={setAsOfDate}
+              setTimeMode={setTimeMode}
+              // If you want add-to-portfolio in Drip pulse, pass this:
+              // onAddTicker={handleAddTickerToPaper}
             />
           </Section>
 
@@ -110,19 +126,31 @@ export default function Home({ user }) {
       {/* FLOW */}
       {activeTab === "flow" && (
         <>
-          <Section label="Monthly Flow" storageKey="home:flowMonthly">
+          <Section label="Monthly Flow " storageKey="home:flowMonthly">
             <MonthlyFlow
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="monthly"
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
+              setTimeframeDays={setTimeframeDays}
+              setAsOfDate={setAsOfDate}
+              setTimeMode={setTimeMode}
             />
           </Section>
 
-          <Section label="Market Pulse (30D)" storageKey="home:flowPulse">
+          <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
             <MonthlyFlow
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="pulse"
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
+              setTimeframeDays={setTimeframeDays}
+              setAsOfDate={setAsOfDate}
+              setTimeMode={setTimeMode}
             />
           </Section>
 
@@ -131,25 +159,29 @@ export default function Home({ user }) {
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="alignment"
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
+              setTimeframeDays={setTimeframeDays}
+              setAsOfDate={setAsOfDate}
+              setTimeMode={setTimeMode}
             />
           </Section>
         </>
       )}
 
       {/* PORTFOLIO */}
-      {activeTab === "portfolio" && (
-        <>
-          <Divider label="Paper Portfolio" />
-          <Card>
-            <PaperPortfolio onTickersChange={setPaperTickers} />
-          </Card>
+{activeTab === "portfolio" && (
+  <>
+    <Section label="Paper Portfolio (Preview)" storageKey="home:portfolio:paper" defaultOpen={true}>
+      <PaperPortfolio onTickersChange={setPaperTickers} />
+    </Section>
 
-          <Divider label="Auto-Invest (Preview)" />
-          <Card>
-            <AutoInvestPreview />
-          </Card>
-        </>
-      )}
+    <Section label="Auto-Invest (Preview)" storageKey="home:portfolio:autoinvest" defaultOpen={true}>
+      <AutoInvestPreview />
+    </Section>
+  </>
+)}
     </PageShell>
   );
 }

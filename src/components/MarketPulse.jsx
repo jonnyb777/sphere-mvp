@@ -1,5 +1,7 @@
 // FILE: src/components/MarketPulse.jsx
 import { useEffect, useMemo, useState } from "react";
+import TimeframeControls from "./TimeframeControls";
+import { Card } from "./ui/UiKit";
 import { pickTop10WithTwoPerSector } from "../utils/pickTop10WithTwoPerSector";
 
 function pct(n) {
@@ -103,7 +105,17 @@ export default function MarketPulse({
   onAddTicker,
   onAvailableTickers,
   onPersonalRunnersChange,
-  onSectorLeadersChange
+  onSectorLeadersChange,
+
+  // values
+  timeframeDays = 30,
+  asOfDate,
+  timeMode = "trailing",
+
+  // setters (optional; when provided, we render the nice in-panel controls)
+  setTimeframeDays,
+  setAsOfDate,
+  setTimeMode
 }) {
   const [sectorLeaders, setSectorLeaders] = useState([]);
   const [tickerLeaders, setTickerLeaders] = useState([]);
@@ -138,7 +150,7 @@ export default function MarketPulse({
     }
   }, [tickersForSpendSectors, onAvailableTickers]);
 
-  const asOf = useMemo(() => {
+  const asOfComputed = useMemo(() => {
     const d1 = sectorLeaders.map((x) => x.latestDate).filter(Boolean);
     const d2 = tickerLeaders.map((x) => x.latestDate).filter(Boolean);
     return maxDate([...d1, ...d2]);
@@ -152,9 +164,15 @@ export default function MarketPulse({
       try {
         // Sector leader ETFs
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
-        const etfJson = await fetchJsonNetlifyFunction(
-          `/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`
-        );
+
+        const qs = new URLSearchParams({
+          tickers: etfTickers,
+          days: String(timeframeDays || 30),
+          asOf: asOfDate || "",
+          mode: timeMode || "trailing"
+        });
+
+        const etfJson = await fetchJsonNetlifyFunction(`/.netlify/functions/market?${qs.toString()}`);
 
         const etfItems = Array.isArray(etfJson.items) ? etfJson.items : [];
         etfItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
@@ -169,9 +187,15 @@ export default function MarketPulse({
 
         // Runners for your top spend sectors
         if (tickersForSpendSectors.length) {
-          const uniJson = await fetchJsonNetlifyFunction(
-            `/.netlify/functions/market?tickers=${encodeURIComponent(tickersForSpendSectors.join(","))}`
-          );
+          const uniQs = new URLSearchParams({
+            tickers: tickersForSpendSectors.join(","),
+            days: String(timeframeDays || 30),
+            asOf: asOfDate || "",
+            mode: timeMode || "trailing"
+          });
+
+          const uniJson = await fetchJsonNetlifyFunction(`/.netlify/functions/market?${uniQs.toString()}`);
+
           const uniItems = Array.isArray(uniJson.items) ? uniJson.items : [];
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
@@ -180,6 +204,8 @@ export default function MarketPulse({
             sectorName: tickerToSector[x.ticker] || "Other / Unmapped"
           }));
 
+          // ✅ Restores your intended selection logic:
+          // prefer at least 1 per top spend sector, then up to 2 per top sector, then fill to 10
           const top10 = pickTop10WithTwoPerSector({
             items: labeledSorted, // already sorted by performance
             topSectors: spendSectors,
@@ -192,7 +218,7 @@ export default function MarketPulse({
           setTickerLeaders(top10);
 
           if (typeof onPersonalRunnersChange === "function") {
-            onPersonalRunnersChange(top10.map((x) => x.ticker));
+            onPersonalRunnersChange(top10.map((x) => x.ticker).filter(Boolean));
           }
         } else {
           setTickerLeaders([]);
@@ -204,13 +230,7 @@ export default function MarketPulse({
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
-        setSectorLeaders([]);
-        setTickerLeaders([]);
         setFatalError(e?.message || String(e));
-
-        if (typeof onSectorLeadersChange === "function") onSectorLeadersChange([]);
-        if (typeof onPersonalRunnersChange === "function") onPersonalRunnersChange([]);
-
         setDataSourceNote(
           "Market data may occasionally fail/lag. If it fails, it’s usually the function endpoint not returning JSON."
         );
@@ -224,14 +244,38 @@ export default function MarketPulse({
     tickersForSpendSectors,
     tickerToSector,
     spendSectors,
+    timeframeDays,
+    asOfDate,
+    timeMode,
     onPersonalRunnersChange,
     onSectorLeadersChange
   ]);
 
+  const showControls =
+    typeof setTimeframeDays === "function" &&
+    typeof setAsOfDate === "function" &&
+    typeof setTimeMode === "function";
+
   return (
-    <div style={{ marginTop: "1rem" }}>
+    <div style={{ marginTop: "0.5rem" }}>
+      {/* ✅ Nice-looking controls (same as the top version): inside a Card */}
+      {showControls ? (
+        <div style={{ marginBottom: "0.75rem" }}>
+          <Card>
+            <TimeframeControls
+              timeframeDays={timeframeDays}
+              setTimeframeDays={setTimeframeDays}
+              asOfDate={asOfDate}
+              setAsOfDate={setAsOfDate}
+              mode={timeMode}
+              setMode={setTimeMode}
+            />
+          </Card>
+        </div>
+      ) : null}
+
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        <b>As of:</b> {asOf || "—"} {loading ? "(Loading…)" : ""}
+        <b>As of:</b> {asOfDate || asOfComputed || "—"} {loading ? "(Loading…)" : ""}
       </p>
 
       {fatalError ? (
@@ -250,7 +294,7 @@ export default function MarketPulse({
         </div>
       ) : null}
 
-      <h4>Top 5 Sector Leaders (30D) — ETF Proxies</h4>
+      <h4>Top 5 Sector Leaders ({timeframeDays}D) — ETF Proxies</h4>
       {sectorLeaders.length === 0 ? (
         <p style={{ fontSize: "0.9rem" }}>No sector leader data yet.</p>
       ) : (
@@ -263,7 +307,7 @@ export default function MarketPulse({
         </ol>
       )}
 
-      <h4>Top 10 Runners (30D) — Based on Your Top Spend Sectors</h4>
+      <h4>Top 10 Runners ({timeframeDays}D) — Based on Your Top Spend Sectors</h4>
       <p style={{ fontSize: "0.9rem" }}>
         Top Spend Sectors (Spend): <b>{spendSectors.join(", ") || "—"}</b>
       </p>
@@ -282,7 +326,7 @@ export default function MarketPulse({
         </ol>
       )}
 
-      {/* Separate add area (not inside runner list) */}
+      {/* Add-to-portfolio panel (Drip only when parent passes onAddTicker) */}
       {typeof onAddTicker === "function" && tickerLeaders.length ? (
         <div style={{ marginTop: "0.9rem", padding: "0.75rem", background: "#f6f6f6" }}>
           <b>Add a runner to Paper Portfolio</b>

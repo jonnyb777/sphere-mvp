@@ -314,7 +314,6 @@ export default function PaperPortfolio({ availableTickers, onTickersChange, comp
 
   return (
     <div style={{ marginTop: "1rem" }}>
-      <h3 style={{ marginBottom: "0.25rem" }}>Paper Portfolio</h3>
 
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
         Simulated trading ticket for preview only. No real brokerage orders are placed.

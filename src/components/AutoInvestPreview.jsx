@@ -228,7 +228,6 @@ export default function AutoInvestPreview({
 
   return (
     <div style={{ marginTop: "1rem" }}>
-      <h3 style={{ marginBottom: "0.25rem" }}>Auto-Invest (Preview Only)</h3>
       <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
         Preview rules: “Invest X% of what I spend at this merchant into the matching company.” No real trades.
       </p>

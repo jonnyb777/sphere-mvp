@@ -1,5 +1,7 @@
 // FILE: src/components/MonthlyFlow.jsx
 import { useEffect, useMemo, useState } from "react";
+import TimeframeControls from "./TimeframeControls";
+import { Card } from "./ui/UiKit";
 import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool, Badge, MiniStat } from "./SectionUI";
 
 function pct(n) {
@@ -14,6 +16,29 @@ function maxDate(dates) {
   if (!parsed.length) return null;
   parsed.sort((a, b) => b.getTime() - a.getTime());
   return parsed[0].toISOString().slice(0, 10);
+}
+
+function endOfMonth(dateISO) {
+  const dt = new Date(dateISO);
+  if (Number.isNaN(dt.getTime())) return null;
+  return new Date(dt.getFullYear(), dt.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function withinWindow(itemDate, timeframeDays, asOfISO, timeMode) {
+  if (!itemDate) return true;
+  const iso = asOfISO || new Date().toISOString().slice(0, 10);
+  const asOf = new Date(iso);
+  if (Number.isNaN(asOf.getTime())) return true;
+
+  const end = timeMode === "monthEnd" ? endOfMonth(iso) : new Date(iso);
+  if (!end) return true;
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - Number(timeframeDays || 30));
+
+  const dt = new Date(itemDate);
+  if (Number.isNaN(dt.getTime())) return true;
+  return dt >= start && dt <= end;
 }
 
 async function fetchJsonStrict(url) {
@@ -154,7 +179,15 @@ export default function MonthlyFlow({
   userRunners,
   onCommunityTopSectorsChange,
   onCommunityRunnersChange,
-  section = "all" // "all" | "monthly" | "pulse" | "alignment"
+  section = "all", // "all" | "monthly" | "pulse" | "alignment"
+  timeframeDays = 30,
+  asOfDate,
+  timeMode = "trailing",
+
+  // optional setters: when present we render the same nice control bar inside Flow's Pulse section
+  setTimeframeDays,
+  setAsOfDate,
+  setTimeMode
 }) {
   // If we're embedded inside Home's <Section>, Home already renders the header band.
   // So: don't render SectionBand or gate content on openMonthly/openPulse/openAlign in embedded mode.
@@ -218,10 +251,12 @@ export default function MonthlyFlow({
         ticker: String(x.ticker || "").toUpperCase().trim(),
         sector: String(x.sector || "Other / Unmapped"),
         signal: String(x.signal || "—"),
-        count: Number(x.count ?? 0)
+        count: Number(x.count ?? 0),
+        date: x.date || x.Date || x.asOf || x.AsOf || null
       }))
-      .filter((x) => x.ticker && x.sector && Number.isFinite(x.count));
-  }, [communityItems]);
+      .filter((x) => x.ticker && x.sector && Number.isFinite(x.count))
+      .filter((x) => withinWindow(x.date, timeframeDays, asOfDate, timeMode));
+  }, [communityItems, timeframeDays, asOfDate, timeMode]);
 
   // Map ticker -> best record (highest count)
   const communityByTicker = useMemo(() => {
@@ -261,7 +296,7 @@ export default function MonthlyFlow({
       chosen.push(x);
       seen.add(x.ticker);
     }
-    // alphabetize by sector, then ticker (your latest rule)
+    // alphabetize by sector, then ticker
     return chosen.sort((a, b) => {
       const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
       if (s !== 0) return s;
@@ -269,7 +304,7 @@ export default function MonthlyFlow({
     });
   }, [normalizedCommunity]);
 
-  // Community runners (kept; 2-per-sector enforcement lives elsewhere)
+  // Community runners
   const top10CommunityRunners = useMemo(() => {
     const topSet = new Set(communityTopSectors);
     const preferred = normalizedCommunity.filter((x) => topSet.has(x.sector));
@@ -290,7 +325,7 @@ export default function MonthlyFlow({
     return chosen.sort((a, b) => {
       const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
       if (s !== 0) return s;
-      return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
+      return String(b.ticker || "").localeCompare(String(a.ticker || ""), undefined, { sensitivity: "base" });
     });
   }, [normalizedCommunity, communityTopSectors]);
 
@@ -302,19 +337,30 @@ export default function MonthlyFlow({
     if (typeof onCommunityRunnersChange === "function") onCommunityRunnersChange(top10CommunityRunners);
   }, [top10CommunityRunners, onCommunityRunnersChange]);
 
-  // Fetch sector leader ETFs
+  // Fetch sector leader ETFs (aligned to timeframe + asOf + mode)
   useEffect(() => {
     const run = async () => {
       setLeadersLoading(true);
       try {
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
-        const json = await fetchJsonStrict(`/.netlify/functions/market?tickers=${encodeURIComponent(etfTickers)}`);
+
+        const qs = new URLSearchParams({
+          tickers: etfTickers,
+          days: String(timeframeDays || 30),
+          asOf: asOfDate || "",
+          mode: timeMode || "trailing"
+        });
+
+        const json = await fetchJsonStrict(`/.netlify/functions/market?${qs.toString()}`);
+
         const items = Array.isArray(json.items) ? json.items : [];
         items.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
+
         const top5 = items.slice(0, 5).map((x) => ({
           ...x,
           sectorName: sectorEtfs.find((s) => s.ticker === x.ticker)?.name || "Sector"
         }));
+
         setSectorLeaders(top5);
       } catch (e) {
         console.error("MonthlyFlow sector leaders error:", e);
@@ -323,8 +369,9 @@ export default function MonthlyFlow({
         setLeadersLoading(false);
       }
     };
+
     run();
-  }, []);
+  }, [timeframeDays, asOfDate, timeMode]);
 
   const asOf = useMemo(() => maxDate(sectorLeaders.map((x) => x.latestDate).filter(Boolean)), [sectorLeaders]);
 
@@ -426,10 +473,7 @@ export default function MonthlyFlow({
   const allowPulseBody = embedded ? true : openPulse;
   const allowAlignBody = embedded ? true : openAlign;
 
-  // Simple, transparent “alignment score” from existing overlaps (no new data):
-  // - Spend↔CommunitySpend overlap counts 40%
-  // - Spend↔CommunityRunners overlap counts 40%
-  // - PersonalRunners↔FlowRunners overlap counts 20%
+  // Simple, transparent alignment score from existing overlaps:
   const alignmentScore = useMemo(() => {
     const a = alignSpendVsCommunitySpend.length;
     const b = alignSpendVsCommunityRunners.length;
@@ -454,6 +498,9 @@ export default function MonthlyFlow({
 
   const scoreMeta = useMemo(() => scoreTone(alignmentScore), [alignmentScore]);
 
+  const showPulseControls =
+    typeof setTimeframeDays === "function" && typeof setAsOfDate === "function" && typeof setTimeMode === "function";
+
   return (
     <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       {flowError ? (
@@ -467,7 +514,15 @@ export default function MonthlyFlow({
             fontSize: UI.FONT_BODY
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap"
+            }}
+          >
             <b>Flow feed error</b>
             <Badge tone="bad">Blocked</Badge>
           </div>
@@ -494,7 +549,15 @@ export default function MonthlyFlow({
               </p>
 
               <SummaryBand>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap"
+                  }}
+                >
                   <div>
                     <b>Community insight:</b> This month, the highest concentration of community spending was in{" "}
                     <b>{narrativeHighestSector}</b>.
@@ -569,21 +632,42 @@ export default function MonthlyFlow({
       {showPulse ? (
         <div style={{ marginTop: embedded ? 0 : "1rem" }}>
           {!embedded ? (
-            <SectionBand
-              title="Market Pulse (Trailing 30 Days)"
-              open={openPulse}
-              onToggle={() => setOpenPulse((v) => !v)}
-            />
+            <SectionBand title={`Market Pulse (${timeframeDays} Days)`} open={openPulse} onToggle={() => setOpenPulse((v) => !v)} />
           ) : null}
 
           {allowPulseBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
+              {/* ✅ Time controls live here for Flow Pulse (same look as the old top-of-page bar) */}
+              {showPulseControls ? (
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <Card>
+                    <TimeframeControls
+                      timeframeDays={timeframeDays}
+                      setTimeframeDays={setTimeframeDays}
+                      asOfDate={asOfDate}
+                      setAsOfDate={setAsOfDate}
+                      mode={timeMode}
+                      setMode={setTimeMode}
+                    />
+                  </Card>
+                </div>
+              ) : null}
+
               <SummaryBand>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap"
+                  }}
+                >
                   <div>
-                    <b>As of:</b> {asOf || "—"} {leadersLoading ? " (Loading…)" : ""}
+                    <b>As of:</b> {asOfDate || asOf || "—"} · <b>Window:</b> {timeframeDays}d · <b>Mode:</b>{" "}
+                    {timeMode === "trailing" ? "Trailing" : "Month-end"} {leadersLoading ? " (Loading…)" : ""}
                   </div>
-                  <Badge tone="neutral">30D</Badge>
+                  <Badge tone="neutral">{timeframeDays}D</Badge>
                 </div>
 
                 <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -593,7 +677,7 @@ export default function MonthlyFlow({
               </SummaryBand>
 
               <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
-                Top 5 Sector Leaders (30D){" "}
+                Top 5 Sector Leaders ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
               </div>
 
@@ -609,7 +693,8 @@ export default function MonthlyFlow({
                     .map((x) => (
                       <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          <b>{x.sectorName}</b> <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
+                          <b>{x.sectorName}</b>{" "}
+                          <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
                           <Badge tone="good">Leader</Badge>
                           <span style={{ fontWeight: 900 }}>{pct(x.return30d)}</span>
                         </div>
@@ -621,7 +706,7 @@ export default function MonthlyFlow({
               )}
 
               <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem" }}>
-                Top 10 Runners (30D){" "}
+                Top 10 Runners ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
                   — based on community top spend sectors
                 </span>
@@ -653,22 +738,24 @@ export default function MonthlyFlow({
       {showAlign ? (
         <div style={{ marginTop: embedded ? 0 : "1rem" }}>
           {!embedded ? (
-            <SectionBand
-              title="Alignment Snapshot (Flow)"
-              open={openAlign}
-              onToggle={() => setOpenAlign((v) => !v)}
-            />
+            <SectionBand title="Alignment Snapshot (Flow)" open={openAlign} onToggle={() => setOpenAlign((v) => !v)} />
           ) : null}
 
           {allowAlignBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <SummaryBand>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap"
+                  }}
+                >
                   <div>
                     <b>Alignment score:</b> <b>{alignmentScore}</b>/100{" "}
-                    <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-                      (based on overlap counts)
-                    </span>
+                    <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(based on overlap counts)</span>
                   </div>
                   <Badge tone={scoreMeta.tone}>{scoreMeta.label}</Badge>
                 </div>
