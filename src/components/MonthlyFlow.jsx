@@ -47,6 +47,7 @@ async function fetchJsonStrict(url) {
   const text = await res.text();
 
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  // Keep strict here to match your original behavior; MarketPulse has the multi-URL fallback.
   if (!ct.includes("application/json")) {
     throw new Error(
       `Non-JSON response for ${url}\nContent-Type: ${ct || "unknown"}\nFirst chars: ${text.slice(0, 80)}`
@@ -73,48 +74,39 @@ const sectorEtfs = [
 const SIGNAL_EXPLAINER_PREVIEW = [
   {
     title: "High spend concentration",
-    body:
-      "A larger share of total community spend is clustering in that sector compared to other sectors (aggregate-only)."
+    body: "A larger share of total community spend is clustering in that sector compared to other sectors (aggregate-only)."
   },
   {
     title: "Moderate concentration",
-    body:
-      "Community spend clusters in that sector, but not overwhelmingly versus others (aggregate-only)."
+    body: "Community spend clusters in that sector, but not overwhelmingly versus others (aggregate-only)."
   },
   {
     title: "Broad-based",
-    body:
-      "Spend is spread across multiple sectors rather than clustering strongly into one (aggregate-only)."
+    body: "Spend is spread across multiple sectors rather than clustering strongly into one (aggregate-only)."
   },
   {
     title: "High breadth",
-    body:
-      "Many distinct merchants/brands contribute to the sector’s signal (more diversified community behavior)."
+    body: "Many distinct merchants/brands contribute to the sector’s signal (more diversified community behavior)."
   },
   {
     title: "Medium breadth",
-    body:
-      "A moderate number of merchants/brands contribute to the sector’s signal."
+    body: "A moderate number of merchants/brands contribute to the sector’s signal."
   },
   {
     title: "Narrow breadth",
-    body:
-      "Fewer merchants/brands contribute to the signal (more concentrated community behavior)."
+    body: "Fewer merchants/brands contribute to the signal (more concentrated community behavior)."
   },
   {
     title: "Stable",
-    body:
-      "The aggregate signal is persistent across recent periods (less noisy)."
+    body: "The aggregate signal is persistent across recent periods (less noisy)."
   },
   {
     title: "Emerging",
-    body:
-      "The signal appears to be strengthening recently (developing trend)."
+    body: "The signal appears to be strengthening recently (developing trend)."
   },
   {
     title: "Spiky",
-    body:
-      "The signal is more volatile or event-driven (more noisy)."
+    body: "The signal is more volatile or event-driven (more noisy)."
   }
 ];
 
@@ -129,13 +121,11 @@ const EXTRA_SIGNALS = [
   },
   {
     title: "Stable breadth",
-    body:
-      "Community activity is spread across multiple names within a sector (more diversified behavior)."
+    body: "Community activity is spread across multiple names within a sector (more diversified behavior)."
   },
   {
     title: "Narrow breadth (tag)",
-    body:
-      "Community activity is concentrated in fewer names within the sector (more concentrated behavior)."
+    body: "Community activity is concentrated in fewer names within the sector (more concentrated behavior)."
   }
 ];
 
@@ -174,6 +164,31 @@ function scoreTone(score) {
   return { tone: "neutral", label: "Low match" };
 }
 
+function windowLabel({ timeframeDays, asOfDate, timeMode }) {
+  const mode = timeMode === "monthEnd" ? "Month-end" : "Trailing";
+  const asOf = asOfDate || "latest available";
+  return `${timeframeDays}d · ${mode} · as-of ${asOf}`;
+}
+
+function buildFlowPulseNarrative({ communityTopSectors, timeframeDays, asOfDate, timeMode }) {
+  const sectors = (communityTopSectors || []).filter(Boolean).slice(0, 5);
+  if (!sectors.length) {
+    return `Upload / load the admin community feed to generate Flow’s Market Pulse. Once we have it, we’ll show sector leaders + community runners for ${windowLabel({
+      timeframeDays,
+      asOfDate,
+      timeMode
+    })}.`;
+  }
+
+  return `This Flow Market Pulse is computed on ${windowLabel({
+    timeframeDays,
+    asOfDate,
+    timeMode
+  })}. We start from the community’s top spend sectors (${sectors.join(
+    ", "
+  )}), show the strongest ETF sector proxies, and list the most active community runners within those sectors (aggregate-only).`;
+}
+
 export default function MonthlyFlow({
   userSpendTickers,
   userRunners,
@@ -210,16 +225,10 @@ export default function MonthlyFlow({
     "sphere:flow:open:monthly:merchants",
     false
   );
-  const [openMonthlySectors, setOpenMonthlySectors] = usePersistedBool(
-    "sphere:flow:open:monthly:sectors",
-    false
-  );
+  const [openMonthlySectors, setOpenMonthlySectors] = usePersistedBool("sphere:flow:open:monthly:sectors", false);
 
   // Signals explained (triangle only)
-  const [openSignalsExplained, setOpenSignalsExplained] = usePersistedBool(
-    "sphere:flow:open:signalsExplained",
-    false
-  );
+  const [openSignalsExplained, setOpenSignalsExplained] = usePersistedBool("sphere:flow:open:signalsExplained", false);
 
   const showMonthly = section === "all" || section === "monthly";
   const showPulse = section === "all" || section === "pulse";
@@ -321,11 +330,11 @@ export default function MonthlyFlow({
       seen.add(x.ticker);
     }
 
-    // Alphabetize display by sector, then ticker
+    // ✅ Fix runner sort: alphabetize by sector, then ticker ascending
     return chosen.sort((a, b) => {
       const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
       if (s !== 0) return s;
-      return String(b.ticker || "").localeCompare(String(a.ticker || ""), undefined, { sensitivity: "base" });
+      return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
     });
   }, [normalizedCommunity, communityTopSectors]);
 
@@ -383,9 +392,7 @@ export default function MonthlyFlow({
   }, [userSpendTickers]);
 
   const userRunnersTickers = useMemo(() => {
-    return (Array.isArray(userRunners) ? userRunners : [])
-      .map((x) => String(x || "").toUpperCase().trim())
-      .filter(Boolean);
+    return (Array.isArray(userRunners) ? userRunners : []).map((x) => String(x || "").toUpperCase().trim()).filter(Boolean);
   }, [userRunners]);
 
   const communitySpendTickers = useMemo(() => {
@@ -403,10 +410,7 @@ export default function MonthlyFlow({
     return a.filter((x) => setB.has(x));
   };
 
-  const alignSpendVsCommunitySpend = useMemo(
-    () => intersect(userSpend, communitySpendTickers),
-    [userSpend, communitySpendTickers]
-  );
+  const alignSpendVsCommunitySpend = useMemo(() => intersect(userSpend, communitySpendTickers), [userSpend, communitySpendTickers]);
 
   const alignSpendVsCommunityRunners = useMemo(
     () => intersect(userSpend, communityRunnerTickers),
@@ -501,6 +505,15 @@ export default function MonthlyFlow({
   const showPulseControls =
     typeof setTimeframeDays === "function" && typeof setAsOfDate === "function" && typeof setTimeMode === "function";
 
+  const pulseNarrative = useMemo(() => {
+    return buildFlowPulseNarrative({
+      communityTopSectors,
+      timeframeDays,
+      asOfDate: asOfDate || asOf || "",
+      timeMode
+    });
+  }, [communityTopSectors, timeframeDays, asOfDate, asOf, timeMode]);
+
   return (
     <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       {flowError ? (
@@ -514,15 +527,7 @@ export default function MonthlyFlow({
             fontSize: UI.FONT_BODY
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap"
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <b>Flow feed error</b>
             <Badge tone="bad">Blocked</Badge>
           </div>
@@ -534,33 +539,19 @@ export default function MonthlyFlow({
       {showMonthly ? (
         <div>
           {!embedded ? (
-            <SectionBand
-              title="Monthly Flow (Paid • Preview)"
-              open={openMonthly}
-              onToggle={() => setOpenMonthly((v) => !v)}
-            />
+            <SectionBand title="Monthly Flow (Paid • Preview)" open={openMonthly} onToggle={() => setOpenMonthly((v) => !v)} />
           ) : null}
 
           {allowMonthlyBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <p style={{ marginTop: 0, fontSize: UI.FONT_BODY }}>
-                Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide
-                aggregate trends — admin fed.
+                Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
               </p>
 
               <SummaryBand>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexWrap: "wrap"
-                  }}
-                >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div>
-                    <b>Community insight:</b> This month, the highest concentration of community spending was in{" "}
-                    <b>{narrativeHighestSector}</b>.
+                    <b>Community insight:</b> This month, the highest concentration of community spending was in <b>{narrativeHighestSector}</b>.
                   </div>
                   <Badge tone="info">Community</Badge>
                 </div>
@@ -572,11 +563,7 @@ export default function MonthlyFlow({
                 </div>
               </SummaryBand>
 
-              <SubHeaderRow
-                title="Top 10 Merchants (Community)"
-                open={openMonthlyMerchants}
-                onToggle={() => setOpenMonthlyMerchants((v) => !v)}
-              />
+              <SubHeaderRow title="Top 10 Merchants (Community)" open={openMonthlyMerchants} onToggle={() => setOpenMonthlyMerchants((v) => !v)} />
 
               {!top10CommunityMerchants.length ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
@@ -596,11 +583,7 @@ export default function MonthlyFlow({
                 </ol>
               ) : null}
 
-              <SubHeaderRow
-                title="Top Sectors (Community Spend)"
-                open={openMonthlySectors}
-                onToggle={() => setOpenMonthlySectors((v) => !v)}
-              />
+              <SubHeaderRow title="Top Sectors (Community Spend)" open={openMonthlySectors} onToggle={() => setOpenMonthlySectors((v) => !v)} />
 
               {loading ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading community feed…</p>
@@ -653,28 +636,23 @@ export default function MonthlyFlow({
                 </div>
               ) : null}
 
-              <SummaryBand>
+              {/* ✅ Narrative band (uses Flow styling tokens) */}
+              <div style={{ marginTop: "0.5rem", marginBottom: "0.75rem" }}>
                 <div
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexWrap: "wrap"
+                    padding: "0.75rem",
+                    background: UI.BAND_BG,
+                    borderRadius: UI.RADIUS_SOFT,
+                    border: `1px solid ${UI.SOFT_BORDER}`
                   }}
                 >
-                  <div>
-                    <b>As of:</b> {asOfDate || asOf || "—"} · <b>Window:</b> {timeframeDays}d · <b>Mode:</b>{" "}
-                    {timeMode === "trailing" ? "Trailing" : "Month-end"} {leadersLoading ? " (Loading…)" : ""}
-                  </div>
-                  <Badge tone="neutral">{timeframeDays}D</Badge>
+                  <b>Market Pulse Narrative</b>
+                  <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
                 </div>
+              </div>
 
-                <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-                  <MiniStat label="Sector leaders" value={sectorLeaders.length || "—"} />
-                  <MiniStat label="Community runners" value={top10CommunityRunners.length || "—"} />
-                </div>
-              </SummaryBand>
+              {/* ✅ Remove the big summary box you asked to delete.
+                  (We keep the data + headings below.) */}
 
               <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
                 Top 5 Sector Leaders ({timeframeDays}D){" "}
@@ -693,8 +671,7 @@ export default function MonthlyFlow({
                     .map((x) => (
                       <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          <b>{x.sectorName}</b>{" "}
-                          <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
+                          <b>{x.sectorName}</b> <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
                           <Badge tone="good">Leader</Badge>
                           <span style={{ fontWeight: 900 }}>{pct(x.return30d)}</span>
                         </div>
@@ -744,15 +721,7 @@ export default function MonthlyFlow({
           {allowAlignBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <SummaryBand>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexWrap: "wrap"
-                  }}
-                >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div>
                     <b>Alignment score:</b> <b>{alignmentScore}</b>/100{" "}
                     <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(based on overlap counts)</span>
@@ -767,6 +736,7 @@ export default function MonthlyFlow({
                 </div>
               </SummaryBand>
 
+              {/* ✅ Restored A/B/Overlap section exactly (with existing logic) */}
               <div style={{ fontSize: UI.FONT_BODY }}>
                 <div style={{ marginBottom: "0.6rem" }}>
                   <b>A) Your Spend Tickers ↔ Community Spend Tickers</b>
@@ -802,9 +772,7 @@ export default function MonthlyFlow({
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>
-                        Sector Leader Proxy
-                      </th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
                     </tr>
                   </thead>
@@ -853,11 +821,7 @@ export default function MonthlyFlow({
                           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                               {r.flags.leader ? <Badge tone="good">Leader</Badge> : <Badge tone="neutral">Not leader</Badge>}
-                              {r.flags.communitySpend ? (
-                                <Badge tone="neutral">Community spend</Badge>
-                              ) : (
-                                <Badge tone="neutral">No spend</Badge>
-                              )}
+                              {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : <Badge tone="neutral">No spend</Badge>}
                               {r.flags.runner ? <Badge tone="info">Runner</Badge> : <Badge tone="neutral">Not runner</Badge>}
                             </div>
                             <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
@@ -871,16 +835,12 @@ export default function MonthlyFlow({
                 </table>
 
                 <div style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
-                  Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders
-                  (market function). Informational only — not recommendations.
+                  Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders (market function).
+                  Informational only — not recommendations.
                 </div>
               </div>
 
-              <SubHeaderRow
-                title="Signals explained (preview)"
-                open={openSignalsExplained}
-                onToggle={() => setOpenSignalsExplained((v) => !v)}
-              />
+              <SubHeaderRow title="Signals explained (preview)" open={openSignalsExplained} onToggle={() => setOpenSignalsExplained((v) => !v)} />
 
               {openSignalsExplained ? (
                 <div

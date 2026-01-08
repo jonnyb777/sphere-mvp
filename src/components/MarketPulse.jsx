@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TimeframeControls from "./TimeframeControls";
 import { Card } from "./ui/UiKit";
+import { UI } from "./SectionUI";
 import { pickTop10WithTwoPerSector } from "../utils/pickTop10WithTwoPerSector";
 
 function pct(n) {
@@ -20,6 +21,47 @@ function maxDate(dates) {
   if (!parsed.length) return null;
   parsed.sort((a, b) => b.getTime() - a.getTime());
   return parsed[0].toISOString().slice(0, 10);
+}
+
+function windowLabel({ timeframeDays, asOfDate, timeMode }) {
+  const mode = timeMode === "monthEnd" ? "Month-end" : "Trailing";
+  const asOf = asOfDate || "latest available";
+  return `${timeframeDays}d · ${mode} · as-of ${asOf}`;
+}
+
+function buildPulseNarrative({ spendSectors, tickerLeaders, timeframeDays, asOfDate, timeMode }) {
+  const sectors = (spendSectors || []).filter(Boolean);
+  const leaders = Array.isArray(tickerLeaders) ? tickerLeaders : [];
+
+  if (!sectors.length) {
+    return `Upload transactions to generate your top spend sectors. Once we have them, we’ll show sector leaders + runners for ${windowLabel({
+      timeframeDays,
+      asOfDate,
+      timeMode
+    })}.`;
+  }
+
+  if (!leaders.length) {
+    return `We found your top spend sectors (${sectors.join(
+      ", "
+    )}), but we don’t have runner data yet for ${windowLabel({ timeframeDays, asOfDate, timeMode })}.`;
+  }
+
+  const leaderSectors = Array.from(new Set(leaders.map((x) => x.sectorName).filter(Boolean)));
+  const covered = leaderSectors.slice(0, 5);
+  const extraCount = Math.max(0, leaderSectors.length - covered.length);
+
+  return `This Market Pulse is computed on ${windowLabel({
+    timeframeDays,
+    asOfDate,
+    timeMode
+  })}. We start from your top spend sectors (${sectors.join(
+    ", "
+  )}) and then select up to 10 “runners” by performance from the tickers mapped to those sectors. Where possible, we prioritize representation across your top sectors (up to 2 per sector), then fill remaining slots with the strongest performers. ${
+    covered.length
+      ? `Current runners span: ${covered.join(", ")}${extraCount ? ` (+${extraCount} more)` : ""}.`
+      : ""
+  }`;
 }
 
 /**
@@ -162,7 +204,6 @@ export default function MarketPulse({
       setFatalError("");
 
       try {
-        // Sector leader ETFs
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
 
         const qs = new URLSearchParams({
@@ -185,7 +226,6 @@ export default function MarketPulse({
         setSectorLeaders(leaders);
         if (typeof onSectorLeadersChange === "function") onSectorLeadersChange(leaders);
 
-        // Runners for your top spend sectors
         if (tickersForSpendSectors.length) {
           const uniQs = new URLSearchParams({
             tickers: tickersForSpendSectors.join(","),
@@ -204,10 +244,8 @@ export default function MarketPulse({
             sectorName: tickerToSector[x.ticker] || "Other / Unmapped"
           }));
 
-          // ✅ Restores your intended selection logic:
-          // prefer at least 1 per top spend sector, then up to 2 per top sector, then fill to 10
           const top10 = pickTop10WithTwoPerSector({
-            items: labeledSorted, // already sorted by performance
+            items: labeledSorted,
             topSectors: spendSectors,
             getSector: (x) => x.sectorName,
             getTicker: (x) => x.ticker,
@@ -256,9 +294,18 @@ export default function MarketPulse({
     typeof setAsOfDate === "function" &&
     typeof setTimeMode === "function";
 
+  const pulseNarrative = useMemo(() => {
+    return buildPulseNarrative({
+      spendSectors,
+      tickerLeaders,
+      timeframeDays,
+      asOfDate: asOfDate || asOfComputed || "",
+      timeMode
+    });
+  }, [spendSectors, tickerLeaders, timeframeDays, asOfDate, asOfComputed, timeMode]);
+
   return (
-    <div style={{ marginTop: "0.5rem" }}>
-      {/* ✅ Nice-looking controls (same as the top version): inside a Card */}
+    <div style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       {showControls ? (
         <div style={{ marginBottom: "0.75rem" }}>
           <Card>
@@ -274,9 +321,21 @@ export default function MarketPulse({
         </div>
       ) : null}
 
-      <p style={{ fontSize: "0.9rem", marginTop: 0 }}>
-        <b>As of:</b> {asOfDate || asOfComputed || "—"} {loading ? "(Loading…)" : ""}
-      </p>
+      {/* ✅ Removed the standalone As-of line between controls and narrative */}
+
+      <div style={{ marginTop: "0.5rem", marginBottom: "0.75rem" }}>
+        <div
+          style={{
+            padding: "0.75rem",
+            background: UI.BAND_BG,
+            borderRadius: UI.RADIUS_SOFT,
+            border: `1px solid ${UI.SOFT_BORDER}`
+          }}
+        >
+          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse narrative</div>
+          <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
+        </div>
+      </div>
 
       {fatalError ? (
         <div
@@ -284,21 +343,27 @@ export default function MarketPulse({
             padding: "0.75rem",
             background: "#fff3cd",
             border: "1px solid #ffeeba",
-            marginBottom: "0.75rem"
+            marginBottom: "0.75rem",
+            borderRadius: UI.RADIUS_SOFT
           }}
         >
           <b>Market Pulse error:</b>
-          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: "0.85rem" }}>
+          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: UI.FONT_BODY }}>
             {fatalError}
           </pre>
         </div>
       ) : null}
 
-      <h4>Top 5 Sector Leaders ({timeframeDays}D) — ETF Proxies</h4>
+      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
+        Top 5 Sector Leaders ({timeframeDays}D){" "}
+        <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
+        {loading ? <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700 }}> (Loading…)</span> : null}
+      </div>
+
       {sectorLeaders.length === 0 ? (
-        <p style={{ fontSize: "0.9rem" }}>No sector leader data yet.</p>
+        <p style={{ fontSize: UI.FONT_BODY }}>No sector leader data yet.</p>
       ) : (
-        <ol>
+        <ol style={{ fontSize: UI.FONT_BODY }}>
           {sectorLeaders.map((x) => (
             <li key={x.ticker}>
               <b>{x.sectorName}</b> ({x.ticker}): <b>{pct(x.return30d)}</b>
@@ -307,17 +372,23 @@ export default function MarketPulse({
         </ol>
       )}
 
-      <h4>Top 10 Runners ({timeframeDays}D) — Based on Your Top Spend Sectors</h4>
-      <p style={{ fontSize: "0.9rem" }}>
+      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem" }}>
+        Top 10 Runners ({timeframeDays}D){" "}
+        <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
+          — based on your top spend sectors
+        </span>
+      </div>
+
+      <p style={{ fontSize: UI.FONT_BODY }}>
         Top Spend Sectors (Spend): <b>{spendSectors.join(", ") || "—"}</b>
       </p>
 
       {tickerLeaders.length === 0 ? (
-        <p style={{ fontSize: "0.9rem" }}>
+        <p style={{ fontSize: UI.FONT_BODY }}>
           No runners shown yet (upload transactions + ensure sector mapping produced at least one recognized sector).
         </p>
       ) : (
-        <ol>
+        <ol style={{ fontSize: UI.FONT_BODY }}>
           {tickerLeaders.map((x) => (
             <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
               <b>{x.sectorName}</b> — {x.ticker}: <b>{pct(x.return30d)}</b>
@@ -326,11 +397,18 @@ export default function MarketPulse({
         </ol>
       )}
 
-      {/* Add-to-portfolio panel (Drip only when parent passes onAddTicker) */}
       {typeof onAddTicker === "function" && tickerLeaders.length ? (
-        <div style={{ marginTop: "0.9rem", padding: "0.75rem", background: "#f6f6f6" }}>
+        <div
+          style={{
+            marginTop: "0.9rem",
+            padding: "0.75rem",
+            background: UI.BAND_BG,
+            borderRadius: UI.RADIUS_SOFT,
+            border: `1px solid ${UI.SOFT_BORDER}`
+          }}
+        >
           <b>Add a runner to Paper Portfolio</b>
-          <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
+          <div style={{ fontSize: UI.FONT_BODY, marginTop: "0.25rem" }}>
             Select a runner to add (you’ll be prompted for the simulated amount).
           </div>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
@@ -347,9 +425,17 @@ export default function MarketPulse({
         </div>
       ) : null}
 
-      <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f6f6f6" }}>
+      <div
+        style={{
+          marginTop: "0.75rem",
+          padding: "0.75rem",
+          background: UI.BAND_BG,
+          borderRadius: UI.RADIUS_SOFT,
+          border: `1px solid ${UI.SOFT_BORDER}`
+        }}
+      >
         <b>Confidence note:</b>
-        <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>{dataSourceNote}</div>
+        <div style={{ fontSize: UI.FONT_BODY, marginTop: "0.25rem" }}>{dataSourceNote}</div>
       </div>
     </div>
   );
