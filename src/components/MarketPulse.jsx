@@ -332,8 +332,8 @@ export default function MarketPulse({
             border: `1px solid ${UI.SOFT_BORDER}`
           }}
         >
-          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse narrative</div>
-          <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
+          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse Narrative</div>
+          <div style={{ marginTop: "0.35rem" }}>{pulseNarrative}</div>
         </div>
       </div>
 

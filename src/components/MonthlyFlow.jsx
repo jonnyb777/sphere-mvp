@@ -515,7 +515,7 @@ export default function MonthlyFlow({
   }, [communityTopSectors, timeframeDays, asOfDate, asOf, timeMode]);
 
   return (
-    <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
+  <div style={{ lineHeight: 1.45 }}>
       {flowError ? (
         <div
           style={{
@@ -636,7 +636,7 @@ export default function MonthlyFlow({
                 </div>
               ) : null}
 
-              {/* ✅ Narrative band (uses Flow styling tokens) */}
+              {/* ✅ Narrative band (identical to MarketPulse.jsx styling) */}
               <div style={{ marginTop: "0.5rem", marginBottom: "0.75rem" }}>
                 <div
                   style={{
@@ -646,7 +646,7 @@ export default function MonthlyFlow({
                     border: `1px solid ${UI.SOFT_BORDER}`
                   }}
                 >
-                  <b>Market Pulse Narrative</b>
+                  <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse Narrative</div>
                   <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
                 </div>
               </div>

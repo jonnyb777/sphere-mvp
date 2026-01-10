@@ -8,8 +8,9 @@ import PaperPortfolio from "../components/PaperPortfolio";
 import AutoInvestPreview from "../components/AutoInvestPreview";
 import AlignmentSnapshotDrip from "../components/AlignmentSnapshotDrip";
 import { inferTickerFromMerchant } from "../utils/mappings";
-import { PageShell, Tabs, Card, Divider, Pill } from "../components/ui/UiKit";
+import { PageShell, Tabs, Card, Pill } from "../components/ui/UiKit";
 import { SectionBand, usePersistedBool } from "../components/SectionUI";
+import { UI } from "../components/SectionUI";
 
 function Section({ storageKey, label, defaultOpen = true, children }) {
   const [open, setOpen] = usePersistedBool(storageKey, defaultOpen);
@@ -79,109 +80,117 @@ export default function Home({ user }) {
       {/* ✅ REMOVED: top-of-page <TimeframeControls /> duplication */}
 
       {/* DRIP */}
-      {activeTab === "drip" && (
-        <>
-          <Section label="Upload Transactions" storageKey="home:upload">
-            <TransactionUploader onUpload={setTransactions} />
-          </Section>
+{activeTab === "drip" && (
+  <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
+    <Section label="Upload Transactions" storageKey="home:upload">
+      <TransactionUploader onUpload={setTransactions} />
+    </Section>
 
-          <Section label="Monthly Drip" storageKey="home:drip">
-            <MonthlyDrip
-              transactions={transactions}
-              onTopSectorsChange={setTopSpendSectors}
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-            />
-          </Section>
+    <Section label="Monthly Drip" storageKey="home:drip">
+      <MonthlyDrip
+        transactions={transactions}
+        onTopSectorsChange={setTopSpendSectors}
+        timeframeDays={timeframeDays}
+        asOfDate={asOfDate}
+        timeMode={timeMode}
+      />
+    </Section>
 
-          <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:pulse">
-            <MarketPulse
-              topSpendSectors={topSpendSectors}
-              transactions={transactions}
-              onAvailableTickers={setAvailableTickers}
-              onPersonalRunnersChange={setPersonalRunners}
-              onSectorLeadersChange={setSectorLeaders}
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-              setTimeframeDays={setTimeframeDays}
-              setAsOfDate={setAsOfDate}
-              setTimeMode={setTimeMode}
-              // If you want add-to-portfolio in Drip pulse, pass this:
-              // onAddTicker={handleAddTickerToPaper}
-            />
-          </Section>
+    <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:pulse">
+      <MarketPulse
+        topSpendSectors={topSpendSectors}
+        transactions={transactions}
+        onAvailableTickers={setAvailableTickers}
+        onPersonalRunnersChange={setPersonalRunners}
+        onSectorLeadersChange={setSectorLeaders}
+        timeframeDays={timeframeDays}
+        asOfDate={asOfDate}
+        timeMode={timeMode}
+        setTimeframeDays={setTimeframeDays}
+        setAsOfDate={setAsOfDate}
+        setTimeMode={setTimeMode}
+      />
+    </Section>
 
-          <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
-            <AlignmentSnapshotDrip
-              transactions={transactions}
-              sectorLeaders={sectorLeaders}
-              personalRunners={personalRunners}
-            />
-          </Section>
-        </>
-      )}
+    <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
+      <AlignmentSnapshotDrip
+        transactions={transactions}
+        sectorLeaders={sectorLeaders}
+        personalRunners={personalRunners}
+      />
+    </Section>
+  </div>
+)}
 
       {/* FLOW */}
-      {activeTab === "flow" && (
+{activeTab === "flow" && (
+  <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
+    <Section label="Monthly Flow " storageKey="home:flowMonthly">
+      <MonthlyFlow
+        userSpendTickers={userSpendTickers}
+        userRunners={personalRunners}
+        section="monthly"
+        timeframeDays={timeframeDays}
+        asOfDate={asOfDate}
+        timeMode={timeMode}
+        setTimeframeDays={setTimeframeDays}
+        setAsOfDate={setAsOfDate}
+        setTimeMode={setTimeMode}
+      />
+    </Section>
+
+    <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
+      <MonthlyFlow
+        userSpendTickers={userSpendTickers}
+        userRunners={personalRunners}
+        section="pulse"
+        timeframeDays={timeframeDays}
+        asOfDate={asOfDate}
+        timeMode={timeMode}
+        setTimeframeDays={setTimeframeDays}
+        setAsOfDate={setAsOfDate}
+        setTimeMode={setTimeMode}
+      />
+    </Section>
+
+    <Section label="Alignment Snapshot (Flow)" storageKey="home:flowAlign">
+      <MonthlyFlow
+        userSpendTickers={userSpendTickers}
+        userRunners={personalRunners}
+        section="alignment"
+        timeframeDays={timeframeDays}
+        asOfDate={asOfDate}
+        timeMode={timeMode}
+        setTimeframeDays={setTimeframeDays}
+        setAsOfDate={setAsOfDate}
+        setTimeMode={setTimeMode}
+      />
+    </Section>
+  </div>
+)}
+
+      {/* PORTFOLIO */}
+      {activeTab === "portfolio" && (
         <>
-          <Section label="Monthly Flow " storageKey="home:flowMonthly">
-            <MonthlyFlow
-              userSpendTickers={userSpendTickers}
-              userRunners={personalRunners}
-              section="monthly"
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-              setTimeframeDays={setTimeframeDays}
-              setAsOfDate={setAsOfDate}
-              setTimeMode={setTimeMode}
-            />
+          {/* Primary: open */}
+          <Section
+            label="Paper Portfolio (Preview)"
+            storageKey="home:portfolio:paper"
+            defaultOpen={true}
+          >
+            <PaperPortfolio onTickersChange={setPaperTickers} />
           </Section>
 
-          <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
-            <MonthlyFlow
-              userSpendTickers={userSpendTickers}
-              userRunners={personalRunners}
-              section="pulse"
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-              setTimeframeDays={setTimeframeDays}
-              setAsOfDate={setAsOfDate}
-              setTimeMode={setTimeMode}
-            />
-          </Section>
-
-          <Section label="Alignment Snapshot (Flow)" storageKey="home:flowAlign">
-            <MonthlyFlow
-              userSpendTickers={userSpendTickers}
-              userRunners={personalRunners}
-              section="alignment"
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-              setTimeframeDays={setTimeframeDays}
-              setAsOfDate={setAsOfDate}
-              setTimeMode={setTimeMode}
-            />
+          {/* Progressive disclosure: collapsed by default */}
+          <Section
+            label="Auto-Invest (Preview)"
+            storageKey="home:portfolio:autoinvest"
+            defaultOpen={false}
+          >
+            <AutoInvestPreview />
           </Section>
         </>
       )}
-
-      {/* PORTFOLIO */}
-{activeTab === "portfolio" && (
-  <>
-    <Section label="Paper Portfolio (Preview)" storageKey="home:portfolio:paper" defaultOpen={true}>
-      <PaperPortfolio onTickersChange={setPaperTickers} />
-    </Section>
-
-    <Section label="Auto-Invest (Preview)" storageKey="home:portfolio:autoinvest" defaultOpen={true}>
-      <AutoInvestPreview />
-    </Section>
-  </>
-)}
     </PageShell>
   );
 }
