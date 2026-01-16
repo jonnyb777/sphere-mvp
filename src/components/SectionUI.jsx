@@ -2,23 +2,36 @@
 import { useEffect, useState } from "react";
 
 // Single source of truth for sizing + spacing.
-// Keep this aligned with MonthlyDrip's "feel".
+// ✅ Updated to “Sphere x Schwab” palette while keeping structure stable.
 export const UI = {
+  // Typography
   FONT_HEADER: 16,
   FONT_BODY: 14,
   FONT_MUTED: 13,
 
-  BAND_BG: "#f6f6f6",
-  BAND_BORDER: "#e6e6e6",
-  SOFT_BORDER: "#eee",
+  // ✅ Schwab-style colors (pulled from CSS variables with safe fallbacks)
+  PRIMARY: "var(--s-primary, #123764)",
+  SECONDARY: "var(--s-secondary, #3f6fa5)",
+  ACCENT: "var(--s-accent, #5fb3d9)",
+  TEXT: "var(--s-text, #1f2b3a)",
 
+  // Surfaces / dividers
+  PAGE_BG: "var(--s-white, #ffffff)",
+  BAND_BG: "var(--s-ice, #eaf2f8)",           // Section background rhythm
+  BAND_BORDER: "var(--s-divider, #d6dee6)",   // Soft gray separators
+  SOFT_BORDER: "var(--s-divider, #d6dee6)",
+
+  // Radii
   RADIUS: 10,
   RADIUS_SOFT: 8,
 
+  // Spacing
   PAD_BAND: "0.85rem 1rem",
   PAD_SUMMARY: "0.6rem 0.75rem",
+  GAP: 12,
 
-  GAP: 12
+  // Shadow (subtle, Schwab-style)
+  SHADOW: "0 8px 24px rgba(18, 55, 100, 0.08)"
 };
 
 export function usePersistedBool(key, defaultValue) {
@@ -44,7 +57,7 @@ export function usePersistedBool(key, defaultValue) {
   return [value, setValue];
 }
 
-// SectionBand: gray header band with triangle (NO white box behind arrow).
+// SectionBand: Schwab-style header band with triangle (NO white box behind arrow).
 export function SectionBand({ title, open, onToggle }) {
   return (
     <div
@@ -71,7 +84,9 @@ export function SectionBand({ title, open, onToggle }) {
         userSelect: "none"
       }}
     >
-      <div style={{ fontWeight: 800, fontSize: UI.FONT_HEADER, lineHeight: 1.2 }}>{title}</div>
+      <div style={{ fontWeight: 900, fontSize: UI.FONT_HEADER, lineHeight: 1.2, color: UI.PRIMARY }}>
+        {title}
+      </div>
 
       {/* Triangle only (no boxed button) */}
       <div
@@ -80,7 +95,9 @@ export function SectionBand({ title, open, onToggle }) {
           fontSize: UI.FONT_HEADER,
           lineHeight: 1,
           padding: "2px 4px",
-          borderRadius: 6
+          borderRadius: 6,
+          color: UI.PRIMARY,
+          opacity: 0.95
         }}
       >
         {open ? "▾" : "▸"}
@@ -99,7 +116,8 @@ export function SummaryBand({ children }) {
         margin: "0.75rem 0",
         border: `1px solid ${UI.SOFT_BORDER}`,
         fontSize: UI.FONT_BODY,
-        lineHeight: 1.45
+        lineHeight: 1.45,
+        color: UI.TEXT
       }}
     >
       {children}
@@ -129,13 +147,14 @@ export function SubHeaderRow({ title, open, onToggle, rightSlot = null }) {
           }}
           style={{
             fontSize: UI.FONT_HEADER,
-            fontWeight: 800,
+            fontWeight: 900,
             lineHeight: 1.2,
             cursor: "pointer",
             userSelect: "none",
             whiteSpace: "nowrap",
             overflow: "hidden",
-            textOverflow: "ellipsis"
+            textOverflow: "ellipsis",
+            color: UI.PRIMARY
           }}
           title="Toggle section"
         >
@@ -157,7 +176,9 @@ export function SubHeaderRow({ title, open, onToggle, rightSlot = null }) {
             fontSize: UI.FONT_HEADER,
             lineHeight: 1,
             padding: "2px 4px",
-            borderRadius: 6
+            borderRadius: 6,
+            color: UI.PRIMARY,
+            opacity: 0.95
           }}
         >
           {open ? "▾" : "▸"}
@@ -185,7 +206,8 @@ export function TextLink({ children, onClick, title = "Toggle list length" }) {
         cursor: "pointer",
         textDecoration: "underline",
         userSelect: "none",
-        opacity: 0.9
+        opacity: 0.9,
+        color: UI.ACCENT
       }}
     >
       {children}
@@ -198,11 +220,12 @@ export function TextLink({ children, onClick, title = "Toggle list length" }) {
    =========================== */
 
 export function Badge({ children, tone = "neutral" }) {
+  // ✅ Keep your existing tones, but align "info" with Sphere accent
   const tones = {
-    neutral: { bg: "#f4f4f5", fg: "#111827", border: "#e5e7eb" },
+    neutral: { bg: "#f4f7fb", fg: "var(--s-text, #1f2b3a)", border: "var(--s-divider, #d6dee6)" },
     good: { bg: "#ecfdf5", fg: "#065f46", border: "#a7f3d0" },
     bad: { bg: "#fef2f2", fg: "#991b1b", border: "#fecaca" },
-    info: { bg: "#eff6ff", fg: "#1d4ed8", border: "#bfdbfe" },
+    info: { bg: "rgba(95,179,217,0.12)", fg: "var(--s-primary, #123764)", border: "rgba(95,179,217,0.45)" },
     warn: { bg: "#fffbeb", fg: "#92400e", border: "#fde68a" }
   };
   const t = tones[tone] || tones.neutral;
@@ -229,11 +252,7 @@ export function Badge({ children, tone = "neutral" }) {
   );
 }
 
-export function Trend({
-  value,
-  formatter = (v) => String(v),
-  showArrow = true
-}) {
+export function Trend({ value, formatter = (v) => String(v), showArrow = true }) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) {
     return <span style={{ color: "#6b7280" }}>—</span>;
   }
@@ -246,7 +265,7 @@ export function Trend({
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
       {showArrow ? <Badge tone={tone}>{arrow}</Badge> : null}
-      <span style={{ fontWeight: 900 }}>{formatter(v)}</span>
+      <span style={{ fontWeight: 900, color: UI.TEXT }}>{formatter(v)}</span>
     </span>
   );
 }
@@ -254,8 +273,8 @@ export function Trend({
 export function MiniStat({ label, value }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>{label}</div>
-      <div style={{ fontSize: UI.FONT_BODY, fontWeight: 900 }}>{value}</div>
+      <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9, color: UI.SECONDARY }}>{label}</div>
+      <div style={{ fontSize: UI.FONT_BODY, fontWeight: 900, color: UI.TEXT }}>{value}</div>
     </div>
   );
 }

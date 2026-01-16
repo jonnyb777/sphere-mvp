@@ -1,68 +1,108 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* Typography */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Force light */
+  color-scheme: light;
+
+  /* Sphere x Schwab palette */
+  --s-primary: #123764;
+  --s-secondary: #3f6fa5;
+  --s-accent: #5fb3d9;
+  --s-ice: #eaf2f8;
+  --s-white: #ffffff;
+  --s-text: #1f2b3a;
+  --s-divider: #d6dee6;
+
+  /* Shared UI */
+  --s-shadow: 0 10px 30px rgba(18, 55, 100, 0.10);
+  --s-radius: 14px;
+  --s-radius-soft: 10px;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
   min-width: 320px;
   min-height: 100vh;
+
+  /* IMPORTANT: remove Vite template centering */
+  display: block;
+
+  background: var(--s-ice);
+  color: var(--s-text);
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Links */
+a {
+  font-weight: 600;
+  color: var(--s-accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--s-secondary);
+  text-decoration: underline;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
+/* Headings */
+h1,
+h2 {
+  color: var(--s-primary);
+  margin: 0;
+}
+h3 {
+  color: var(--s-secondary);
+  margin: 0;
+}
+
+/* Inputs */
+input,
+select,
+textarea {
   font-family: inherit;
-  background-color: #1a1a1a;
+}
+
+/* Buttons (base) */
+button {
+  border-radius: var(--s-radius-soft);
+  border: 1px solid var(--s-divider);
+  padding: 0.65em 1.1em;
+  font-size: 1em;
+  font-weight: 800;
+  background: var(--s-white);
+  color: var(--s-primary);
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: transform 0.05s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
 }
+
 button:hover {
-  border-color: #646cff;
+  border-color: var(--s-secondary);
+  box-shadow: 0 6px 16px rgba(18, 55, 100, 0.10);
 }
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 button:focus,
 button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+  outline: 3px solid rgba(95, 179, 217, 0.35);
+  outline-offset: 2px;
 }

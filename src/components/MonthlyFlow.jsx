@@ -575,11 +575,11 @@ export default function MonthlyFlow({
                     <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                         <b>{x.sector}</b> — <b>{x.ticker}</b>
-                        <Badge tone="neutral">Merchant proxy</Badge>
                         <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
                       </div>
                     </li>
                   ))}
+
                 </ol>
               ) : null}
 
@@ -600,7 +600,6 @@ export default function MonthlyFlow({
                       <li key={s} style={{ marginBottom: "0.35rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <b>{s}</b>
-                          <Badge tone="info">Top 5</Badge>
                         </div>
                       </li>
                     ))}
@@ -646,7 +645,7 @@ export default function MonthlyFlow({
                     border: `1px solid ${UI.SOFT_BORDER}`
                   }}
                 >
-                  <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse Narrative</div>
+                  <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Market Pulse Narrative</div>
                   <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
                 </div>
               </div>
@@ -654,7 +653,7 @@ export default function MonthlyFlow({
               {/* ✅ Remove the big summary box you asked to delete.
                   (We keep the data + headings below.) */}
 
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem",color: UI.PRIMARY }}>
                 Top 5 Sector Leaders ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
               </div>
@@ -672,7 +671,6 @@ export default function MonthlyFlow({
                       <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <b>{x.sectorName}</b> <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>
-                          <Badge tone="good">Leader</Badge>
                           <span style={{ fontWeight: 900 }}>{pct(x.return30d)}</span>
                         </div>
                       </li>
@@ -682,7 +680,7 @@ export default function MonthlyFlow({
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>No sector leader data yet.</p>
               )}
 
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem" }}>
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem",color: UI.PRIMARY }}>
                 Top 10 Runners ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
                   — based on community top spend sectors
@@ -695,7 +693,6 @@ export default function MonthlyFlow({
                     <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                         <b>{x.sector}</b> — <b>{x.ticker}</b>
-                        <Badge tone="info">Runner</Badge>
                         <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
                       </div>
                     </li>

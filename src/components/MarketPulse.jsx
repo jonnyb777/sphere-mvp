@@ -332,7 +332,7 @@ export default function MarketPulse({
             border: `1px solid ${UI.SOFT_BORDER}`
           }}
         >
-          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900 }}>Market Pulse Narrative</div>
+          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Market Pulse Narrative</div>
           <div style={{ marginTop: "0.35rem" }}>{pulseNarrative}</div>
         </div>
       </div>
@@ -354,7 +354,7 @@ export default function MarketPulse({
         </div>
       ) : null}
 
-      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem" }}>
+      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem", color: UI.PRIMARY }}>
         Top 5 Sector Leaders ({timeframeDays}D){" "}
         <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
         {loading ? <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700 }}> (Loading…)</span> : null}
@@ -372,7 +372,7 @@ export default function MarketPulse({
         </ol>
       )}
 
-      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem" }}>
+      <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem", color: UI.PRIMARY }}>
         Top 10 Runners ({timeframeDays}D){" "}
         <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
           — based on your top spend sectors
