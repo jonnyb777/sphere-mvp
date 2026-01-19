@@ -56,6 +56,54 @@ async function fetchJsonStrict(url) {
   return JSON.parse(text);
 }
 
+/**
+ * ✅ Non-breaking community feed normalization:
+ * Supports:
+ *  A) New engine payload: ARRAY of { ticker, sector, signal, count, date, eligibility?, ... }
+ *  B) Legacy static object payload: { asOf, narrativeHighestSector, topSectors, signals:[{ticker, sector}, ...] }
+ */
+function normalizeCommunityPayload(payload) {
+  if (Array.isArray(payload)) return payload;
+
+  if (payload && typeof payload === "object" && Array.isArray(payload.signals)) {
+    const asOf = payload.asOf || payload.AsOf || payload.date || payload.Date || null;
+
+    return payload.signals
+      .map((x) => ({
+        ticker: String(x.ticker || "").toUpperCase().trim(),
+        sector: String(x.sector || "Other / Unmapped"),
+        signal: String(x.signal || "—"),
+        count: Number(x.count ?? 1),
+        date: asOf,
+        // legacy object has no credibility metadata; leave empty
+        users: 0,
+        events: 0,
+        maxUserShare: 0,
+        top3Share: 0,
+        deltaPct: 0,
+        eligibility: null
+      }))
+      .filter((x) => x.ticker);
+  }
+
+  return [];
+}
+
+// Calm credibility badge (UI-safe).
+// - No eligibility: show nothing (keeps static demo clean)
+// - eligibility.passed === true: Verified
+// - eligibility.passed === false: Limited (calm, non-alarming)
+function VerifiedBadge({ item }) {
+  const elig = item?.eligibility;
+  if (!elig) return null;
+
+  const passed = elig.passed === true;
+  if (passed) return <Badge tone="neutral">Verified</Badge>;
+
+  // Quiet warning label, only when eligibility exists
+  return <Badge tone="neutral">Limited</Badge>;
+}
+
 // ---------- Flow-specific helpers ----------
 const sectorEtfs = [
   { ticker: "XLC", name: "Communication Services" },
@@ -128,7 +176,6 @@ const EXTRA_SIGNALS = [
     body: "Community activity is concentrated in fewer names within the sector (more concentrated behavior)."
   }
 ];
-
 // Best-effort mapping: Flow bucket -> ETF sector leader label (matches sectorEtfs names)
 function bucketToEtfSectorName(bucket) {
   const b = String(bucket || "");
@@ -219,6 +266,7 @@ export default function MonthlyFlow({
   const [openMonthly, setOpenMonthly] = usePersistedBool("sphere:flow:open:monthly", true);
   const [openPulse, setOpenPulse] = usePersistedBool("sphere:flow:open:pulse", true);
   const [openAlign, setOpenAlign] = usePersistedBool("sphere:flow:open:alignment", true);
+  const [openTrustPanel, setOpenTrustPanel] = usePersistedBool("sphere:flow:open:trustPanel", false);
 
   // Monthly subsection toggles (triangle only)
   const [openMonthlyMerchants, setOpenMonthlyMerchants] = usePersistedBool(
@@ -234,14 +282,38 @@ export default function MonthlyFlow({
   const showPulse = section === "all" || section === "pulse";
   const showAlign = section === "all" || section === "alignment";
 
-  // Load admin-fed community file
+  /**
+   * ✅ Community feed loading (non-breaking):
+   * 1) Prefer server function (Option A): /.netlify/functions/community-flow?days&asOf&mode
+   * 2) If that fails, fall back to /community-flow.json
+   *
+   * We normalize both shapes so the rest of the file remains stable.
+   */
   useEffect(() => {
     const run = async () => {
       setLoading(true);
       setFlowError("");
+
       try {
-        const json = await fetchJsonStrict("/community-flow.json");
-        const arr = Array.isArray(json) ? json : [];
+        let json = null;
+
+        // Try server function first (aligned with timeframe controls)
+        try {
+          const qs = new URLSearchParams({
+            days: String(timeframeDays || 30),
+            asOf: asOfDate || "",
+            mode: timeMode || "trailing"
+          });
+
+          json = await fetchJsonStrict(`/.netlify/functions/community-flow?${qs.toString()}`);
+        } catch (e) {
+          console.warn("MonthlyFlow: community-flow function failed; falling back to static file", e);
+          const res = await fetch("/community-flow.json", { cache: "no-store" });
+          const text = await res.text();
+          json = JSON.parse(text);
+        }
+
+        const arr = normalizeCommunityPayload(json);
         setCommunityItems(arr);
       } catch (e) {
         console.error("MonthlyFlow load error:", e);
@@ -251,9 +323,16 @@ export default function MonthlyFlow({
         setLoading(false);
       }
     };
-    run();
-  }, []);
 
+    run();
+    // important: we want community feed to reflect timeframe controls
+  }, [timeframeDays, asOfDate, timeMode]);
+  /**
+   * ✅ Credibility integration (non-breaking):
+   * - If eligibility exists: only include items where eligibility.passed === true
+   * - If eligibility missing (legacy payload): allow through (preview behavior)
+   * - Adds optional metadata fields without affecting existing UI sizing/colors
+   */
   const normalizedCommunity = useMemo(() => {
     return (Array.isArray(communityItems) ? communityItems : [])
       .map((x) => ({
@@ -261,10 +340,19 @@ export default function MonthlyFlow({
         sector: String(x.sector || "Other / Unmapped"),
         signal: String(x.signal || "—"),
         count: Number(x.count ?? 0),
-        date: x.date || x.Date || x.asOf || x.AsOf || null
+        date: x.date || x.Date || x.asOf || x.AsOf || null,
+
+        // credibility metadata (optional)
+        users: Number(x.users ?? 0),
+        events: Number(x.events ?? 0),
+        maxUserShare: Number(x.maxUserShare ?? 0),
+        top3Share: Number(x.top3Share ?? 0),
+        deltaPct: Number(x.deltaPct ?? 0),
+        eligibility: x.eligibility || null
       }))
       .filter((x) => x.ticker && x.sector && Number.isFinite(x.count))
-      .filter((x) => withinWindow(x.date, timeframeDays, asOfDate, timeMode));
+      .filter((x) => withinWindow(x.date, timeframeDays, asOfDate, timeMode))
+      .filter((x) => (x.eligibility ? x.eligibility.passed === true : true));
   }, [communityItems, timeframeDays, asOfDate, timeMode]);
 
   // Map ticker -> best record (highest count)
@@ -513,9 +601,8 @@ export default function MonthlyFlow({
       timeMode
     });
   }, [communityTopSectors, timeframeDays, asOfDate, asOf, timeMode]);
-
   return (
-  <div style={{ lineHeight: 1.45 }}>
+    <div style={{ lineHeight: 1.45 }}>
       {flowError ? (
         <div
           style={{
@@ -532,6 +619,45 @@ export default function MonthlyFlow({
             <Badge tone="bad">Blocked</Badge>
           </div>
           <div style={{ marginTop: "0.25rem", fontSize: UI.FONT_BODY, whiteSpace: "pre-wrap" }}>{flowError}</div>
+        </div>
+      ) : null}
+      
+      <SubHeaderRow
+        title="How Flow works (privacy + credibility)"
+        open={openTrustPanel}
+        onToggle={() => setOpenTrustPanel((v) => !v)}
+      />
+
+      {openTrustPanel ? (
+        <div
+          style={{
+            marginTop: "0.6rem",
+            padding: "0.75rem",
+            background: UI.BAND_BG,
+            borderRadius: UI.RADIUS_SOFT,
+            border: `1px solid ${UI.SOFT_BORDER}`,
+            fontSize: UI.FONT_BODY
+          }}
+        >
+          <div style={{ marginBottom: "0.5rem" }}>
+            <b>Flow is aggregate-only.</b> Your individual transactions are never shown in community views.
+          </div>
+
+          <ul style={{ marginTop: 0, marginBottom: 0, paddingLeft: "1.1rem" }}>
+            <li>
+              <b>Verified</b> = the bucket met minimum privacy + quality thresholds (enough contributors, not dominated by a few users).
+            </li>
+            <li>
+              <b>Limited</b> = the bucket exists, but didn’t meet thresholds yet (we show it cautiously or as preview).
+            </li>
+            <li>
+              <b>No badge</b> = demo/static feed or missing credibility metadata.
+            </li>
+          </ul>
+
+          <div style={{ marginTop: "0.6rem", fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+            Informational only — Flow highlights patterns, not advice.
+          </div>
         </div>
       ) : null}
 
@@ -563,33 +689,40 @@ export default function MonthlyFlow({
                 </div>
               </SummaryBand>
 
-              <SubHeaderRow title="Top 10 Merchants (Community)" open={openMonthlyMerchants} onToggle={() => setOpenMonthlyMerchants((v) => !v)} />
+              <SubHeaderRow
+                title="Top 10 Merchants (Community)"
+                open={openMonthlyMerchants}
+                onToggle={() => setOpenMonthlyMerchants((v) => !v)}
+              />
 
               {!top10CommunityMerchants.length ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
-                  No community merchant data yet (admin aggregate feed not populated).
+                  {loading ? "Loading community feed…" : "No community merchant data yet (feed not populated)."}
                 </p>
               ) : openMonthlyMerchants ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
                   {top10CommunityMerchants.map((x) => (
                     <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                        <b>{x.sector}</b> — <b>{x.ticker}</b>
+                        <b>{x.sector}</b> — <b>{x.ticker}</b> <VerifiedBadge item={x} />
                         <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
                       </div>
                     </li>
                   ))}
-
                 </ol>
               ) : null}
 
-              <SubHeaderRow title="Top Sectors (Community Spend)" open={openMonthlySectors} onToggle={() => setOpenMonthlySectors((v) => !v)} />
+              <SubHeaderRow
+                title="Top Sectors (Community Spend)"
+                open={openMonthlySectors}
+                onToggle={() => setOpenMonthlySectors((v) => !v)}
+              />
 
               {loading ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading community feed…</p>
               ) : !communityTopSectors.length ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
-                  No community sectors shown yet (admin aggregate feed not populated).
+                  No community sectors shown yet (feed not populated).
                 </p>
               ) : openMonthlySectors ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
@@ -650,15 +783,14 @@ export default function MonthlyFlow({
                 </div>
               </div>
 
-              {/* ✅ Remove the big summary box you asked to delete.
-                  (We keep the data + headings below.) */}
-
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem",color: UI.PRIMARY }}>
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem", color: UI.PRIMARY }}>
                 Top 5 Sector Leaders ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
               </div>
 
-              {sectorLeaders.length ? (
+              {leadersLoading ? (
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading sector leaders…</p>
+              ) : sectorLeaders.length ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
                   {sectorLeaders
                     .slice()
@@ -680,7 +812,7 @@ export default function MonthlyFlow({
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>No sector leader data yet.</p>
               )}
 
-              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem",color: UI.PRIMARY }}>
+              <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem", color: UI.PRIMARY }}>
                 Top 10 Runners ({timeframeDays}D){" "}
                 <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
                   — based on community top spend sectors
@@ -692,7 +824,7 @@ export default function MonthlyFlow({
                   {top10CommunityRunners.map((x) => (
                     <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                        <b>{x.sector}</b> — <b>{x.ticker}</b>
+                        <b>{x.sector}</b> — <b>{x.ticker}</b> <VerifiedBadge item={x} />
                         <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
                       </div>
                     </li>
@@ -700,7 +832,7 @@ export default function MonthlyFlow({
                 </ol>
               ) : (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
-                  No community runners shown yet (admin aggregate feed not populated).
+                  {loading ? "Loading community feed…" : "No community runners shown yet (feed not populated)."}
                 </p>
               )}
             </div>
@@ -763,126 +895,136 @@ export default function MonthlyFlow({
               <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: UI.FONT_BODY }}>
                   <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>#</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Ticker</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {robustFlowRows.map((r) => (
-                      <tr key={r.ticker}>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.idx}</td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <b>{r.ticker}</b>
-                        </td>
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.sectorBucket}</td>
+  <tr>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>#</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Ticker</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
+    <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
+  </tr>
+</thead>
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <b>{r.signalRaw}</b>
-                            {r.flags.runner ? <Badge tone="info">Runner</Badge> : null}
-                            {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : null}
-                            {r.flags.leader ? <Badge tone="good">Leader proxy</Badge> : null}
-                          </div>
+<tbody>
+{robustFlowRows.map((r) => (
+  <tr key={r.ticker}>
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.idx}</td>
 
-                          {r.signalParts.length ? (
-                            <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.9 }}>
-                              {r.signalParts.map((p) => (
-                                <div key={p}>• {p}</div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.75 }}>
-                              No signal line available for this ticker in the community feed.
-                            </div>
-                          )}
-                        </td>
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      <b>{r.ticker}</b>
+    </td>
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          {r.count === null ? "—" : <b>{r.count}</b>}
-                        </td>
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      {r.sectorBucket}
+    </td>
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <span>{r.etfSector}</span>
-                            {r.flags.leader ? <Badge tone="good">Top 5 leader</Badge> : <Badge tone="neutral">—</Badge>}
-                          </div>
-                        </td>
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <b>{r.signalRaw}</b>
+        {r.flags.runner ? <Badge tone="info">Runner</Badge> : null}
+        {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : null}
+        {r.flags.leader ? <Badge tone="good">Leader proxy</Badge> : null}
+      </div>
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              {r.flags.leader ? <Badge tone="good">Leader</Badge> : <Badge tone="neutral">Not leader</Badge>}
-                              {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : <Badge tone="neutral">No spend</Badge>}
-                              {r.flags.runner ? <Badge tone="info">Runner</Badge> : <Badge tone="neutral">Not runner</Badge>}
-                            </div>
-                            <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-                              <b>Trigger:</b> {r.flags.trigger}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                <div style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
-                  Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders (market function).
-                  Informational only — not recommendations.
-                </div>
-              </div>
-
-              <SubHeaderRow title="Signals explained (preview)" open={openSignalsExplained} onToggle={() => setOpenSignalsExplained((v) => !v)} />
-
-              {openSignalsExplained ? (
-                <div
-                  style={{
-                    marginTop: "0.6rem",
-                    padding: "0.75rem",
-                    background: UI.BAND_BG,
-                    borderRadius: UI.RADIUS_SOFT,
-                    border: `1px solid ${UI.SOFT_BORDER}`,
-                    fontSize: UI.FONT_BODY
-                  }}
-                >
-                  <div style={{ marginBottom: "0.5rem" }}>
-                    When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
-                  </div>
-
-                  <ul style={{ marginTop: 0 }}>
-                    {SIGNAL_EXPLAINER_PREVIEW.map((x) => (
-                      <li key={x.title} style={{ marginBottom: "0.35rem" }}>
-                        <b>{x.title}</b>: {x.body}
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div style={{ marginTop: "0.75rem" }}>
-                    <b>How to read the full Signal line:</b>
-                    <div style={{ marginTop: "0.25rem" }}>{SIGNAL_LINE_READER}</div>
-                  </div>
-
-                  <div style={{ marginTop: "0.75rem" }}>
-                    <b>Additional signal tags you may see in this demo:</b>
-                    <ul style={{ marginTop: "0.35rem" }}>
-                      {EXTRA_SIGNALS.map((x) => (
-                        <li key={x.title} style={{ marginBottom: "0.35rem" }}>
-                          <b>{x.title}</b>: {x.body}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+      {r.signalParts.length ? (
+        <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.9 }}>
+          {r.signalParts.map((p) => (
+            <div key={p}>• {p}</div>
+          ))}
         </div>
-      ) : null}
+      ) : (
+        <div style={{ fontSize: UI.FONT_MUTED, marginTop: 4, opacity: 0.75 }}>
+          No signal line available for this ticker in the community feed.
+        </div>
+      )}
+    </td>
+
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      {r.count === null ? "—" : <b>{r.count}</b>}
+    </td>
+
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span>{r.etfSector}</span>
+        {r.flags.leader ? <Badge tone="good">Top 5 leader</Badge> : <Badge tone="neutral">—</Badge>}
+      </div>
+    </td>
+
+    <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {r.flags.leader ? <Badge tone="good">Leader</Badge> : <Badge tone="neutral">Not leader</Badge>}
+          {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : <Badge tone="neutral">No spend</Badge>}
+          {r.flags.runner ? <Badge tone="info">Runner</Badge> : <Badge tone="neutral">Not runner</Badge>}
+        </div>
+        <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+          <b>Trigger:</b> {r.flags.trigger}
+        </div>
+      </div>
+    </td>
+  </tr>
+))}
+</tbody>
+</table>
+
+<div style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
+  Signal + count come from the admin community feed. Sector leader proxy comes from ETF 30D leaders (market function).
+  Informational only — not recommendations.
+</div>
+</div>
+
+<SubHeaderRow
+  title="Signals explained (preview)"
+  open={openSignalsExplained}
+  onToggle={() => setOpenSignalsExplained((v) => !v)}
+/>
+
+{openSignalsExplained ? (
+  <div
+    style={{
+      marginTop: "0.6rem",
+      padding: "0.75rem",
+      background: UI.BAND_BG,
+      borderRadius: UI.RADIUS_SOFT,
+      border: `1px solid ${UI.SOFT_BORDER}`,
+      fontSize: UI.FONT_BODY
+    }}
+  >
+    <div style={{ marginBottom: "0.5rem" }}>
+      When you see: <b>Signal: High spend concentration · Narrow breadth · Stable</b>, each phrase means:
     </div>
-  );
+
+    <ul style={{ marginTop: 0 }}>
+      {SIGNAL_EXPLAINER_PREVIEW.map((x) => (
+        <li key={x.title} style={{ marginBottom: "0.35rem" }}>
+          <b>{x.title}</b>: {x.body}
+        </li>
+      ))}
+    </ul>
+
+    <div style={{ marginTop: "0.75rem" }}>
+      <b>How to read the full Signal line:</b>
+      <div style={{ marginTop: "0.25rem" }}>{SIGNAL_LINE_READER}</div>
+    </div>
+
+    <div style={{ marginTop: "0.75rem" }}>
+      <b>Additional signal tags you may see in this demo:</b>
+      <ul style={{ marginTop: "0.35rem" }}>
+        {EXTRA_SIGNALS.map((x) => (
+          <li key={x.title} style={{ marginBottom: "0.35rem" }}>
+            <b>{x.title}</b>: {x.body}
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+) : null}
+
+</div>
+) : null}
+</div>
+) : null}
+</div>
+);
 }

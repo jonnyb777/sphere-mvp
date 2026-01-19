@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+URL=http://localhost:8888
 
 # Editor directories and files
 .vscode/*

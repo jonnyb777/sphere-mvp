@@ -1,21 +1,10 @@
 // FILE: src/components/SphericalFeed.jsx
 import { useEffect, useMemo, useState } from "react";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  serverTimestamp,
-  startAfter
-} from "firebase/firestore";
+import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, startAfter } from "firebase/firestore";
 import { db } from "../firebase";
 import { UI, Badge } from "./SectionUI";
 
-const ADMIN_POST_ALLOWLIST = [
-  "birl.mar10@gmail.com" // ✅ you
-];
+const ADMIN_POST_ALLOWLIST = ["birl.mar10@gmail.com"]; // ✅ you
 
 function normalizeEmail(x) {
   return String(x || "").trim().toLowerCase();
@@ -66,9 +55,8 @@ function formatWhen(ts) {
  * Collections used:
  *  - posts
  *  - posts_pending
- *  - waitlist
  */
-export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
+export default function SphericalFeed({ userEmail = "", onUpgradeClick }) {
   const isAdmin = useMemo(() => isAdminEmail(userEmail), [userEmail]);
 
   const [posts, setPosts] = useState([]);
@@ -116,12 +104,7 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
     setMoreLoading(true);
     setError("");
     try {
-      const q = query(
-        collection(db, "posts"),
-        orderBy("createdAt", "desc"),
-        startAfter(lastDoc),
-        limit(PAGE_SIZE)
-      );
+      const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), startAfter(lastDoc), limit(PAGE_SIZE));
       const snap = await getDocs(q);
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setPosts((prev) => [...prev, ...rows]);
@@ -144,7 +127,6 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
     const t = title.trim();
     const b = body.trim();
     const tg = String(tag || "").trim();
-
     if (!t || !b) return;
 
     setPosting(true);
@@ -176,41 +158,13 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
     } catch (e) {
       console.error("submitPost error:", e);
       setError(
-        e?.message ||
-          "Couldn’t submit the post. (Most common: Firestore rules don’t allow writes yet.)"
+        e?.message || "Couldn’t submit the post. (Most common: Firestore rules don’t allow writes yet.)"
       );
     } finally {
       setPosting(false);
     }
   }
 
-  // ✅ REAL "Notify me" implementation (writes to Firestore)
-  async function writeWaitlist(reason = "spherical_waitlist") {
-    try {
-      const email = normalizeEmail(userEmail) || null;
-
-      // If parent passed a handler, call it too (but this function will still persist)
-      onJoinWaitlist?.(reason);
-
-      await addDoc(collection(db, "waitlist"), {
-        email,
-        reason,
-        source: "spherical",
-        createdAt: serverTimestamp()
-      });
-
-      alert("✅ Got it — we’ll notify you.");
-    } catch (e) {
-      console.error("waitlist write error:", e);
-      alert(
-        "Couldn’t save your notify request yet. This is usually Firestore rules or Firestore not enabled."
-      );
-    }
-  }
-
-  // Layout helpers to fix the “red box / gutter” issue:
-  // - Max width keeps the composer/feed aligned
-  // - overflow hidden prevents weird horizontal spill
   const WRAP = {
     width: "100%",
     maxWidth: 920,
@@ -251,7 +205,7 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
         </div>
       </div>
 
-      {/* Composer (everyone can post) */}
+      {/* Composer */}
       <div
         style={{
           background: "var(--s-white, #fff)",
@@ -342,16 +296,10 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
             {posting ? "Posting…" : isAdmin ? "Post (Live)" : "Post (Review)"}
           </button>
 
-          <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-            Tip: keep it short, calm, and clear.
-          </div>
+          <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>Tip: keep it short, calm, and clear.</div>
         </div>
 
-        {error ? (
-          <div style={{ marginTop: 10, fontSize: UI.FONT_BODY, color: "#991b1b" }}>
-            {error}
-          </div>
-        ) : null}
+        {error ? <div style={{ marginTop: 10, fontSize: UI.FONT_BODY, color: "#991b1b" }}>{error}</div> : null}
       </div>
 
       {/* Feed */}
@@ -439,7 +387,7 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
         </div>
       ) : null}
 
-      {/* Footer CTA */}
+      {/* Footer CTA (NO waitlist — matches Flow CTA behavior) */}
       <div
         style={{
           marginTop: "1.1rem",
@@ -451,25 +399,26 @@ export default function SphericalFeed({ userEmail = "", onJoinWaitlist }) {
       >
         <div style={{ fontWeight: 900, color: "var(--s-primary, #123764)" }}>Want Flow access?</div>
         <div style={{ marginTop: 6, fontSize: UI.FONT_BODY, opacity: 0.9 }}>
-          Join the upgrade list and you’ll get notified as pricing + checkout go live.
+          Unlock Flow to access community trends + alignment across Sphere.
         </div>
+
         <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
-            onClick={() => writeWaitlist("spherical_waitlist")}
+            onClick={() => onUpgradeClick?.()}
             style={{
               padding: "10px 14px",
               fontWeight: 900,
-              borderRadius: UI.RADIUS_SOFT,
+              borderRadius: 10,
               border: "1px solid var(--s-divider, #d6dee6)",
-              background: "var(--s-accent, #5fb3d9)",
-              color: "white",
+              background: "var(--s-ice, #eaf2f8)",
               cursor: "pointer"
             }}
           >
-            Notify me →
+            Unlock Flow →
           </button>
-          <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(We only store your email + request type.)</div>
+
+          <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>Opens Stripe Checkout</div>
         </div>
       </div>
     </div>

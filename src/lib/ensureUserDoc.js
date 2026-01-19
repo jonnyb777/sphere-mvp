@@ -1,4 +1,3 @@
-// FILE: src/lib/ensureUserDoc.js
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -7,10 +6,11 @@ import { db } from "../firebase";
  * - First login: creates users/{uid}
  * - Every login: updates lastLoginAt + email
  *
- * Server-backed source of truth fields live here:
+ * Server-backed source of truth fields:
  * - role (e.g. "admin")
  * - flowAccess (boolean)
  * - canPost (boolean)
+ * - onboardingComplete (boolean)
  */
 export async function ensureUserDoc(firebaseUser) {
   if (!firebaseUser?.uid) return null;
@@ -25,31 +25,29 @@ export async function ensureUserDoc(firebaseUser) {
   };
 
   if (!snap.exists()) {
-    // ✅ First login: create defaults once
+    // ✅ First login: create defaults
     const first = {
       ...base,
       createdAt: serverTimestamp(),
 
-      // ---- Server-backed flags (defaults) ----
-      role: "user",          // "admin" for you later
-      flowAccess: false,     // server truth for paid access
-      canPost: true,         // allow posting (you can change later)
-
-      // Optional: keep track of onboarding
+      // ---- Server-backed flags ----
+      role: "user",        // you can manually set yourself to "admin"
+      flowAccess: false,  // paid access flag
+      canPost: true,      // can submit to Spherical
       onboardingComplete: false
     };
 
-    await setDoc(ref, first, { merge: true });
+    await setDoc(ref, first);
     return first;
   }
 
-  // ✅ Returning login: update a couple fields
+  // ✅ Returning user: update login info only
   await setDoc(ref, base, { merge: true });
   return snap.data();
 }
 
 /**
- * Helper: load the user doc (the server truth).
+ * Optional helper if you ever want to fetch manually
  */
 export async function readUserDoc(uid) {
   if (!uid) return null;

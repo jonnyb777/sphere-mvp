@@ -1,14 +1,15 @@
+// FILE: src/components/TransactionUploader.jsx
 import { useMemo, useState } from "react";
 
 /**
  * MVP uploader:
  * - Accepts CSV + JSON (Netlify-safe)
  * - Provides "Download CSV template" below Choose file
- * - No category required (mapping happens later)
+ * - Still feeds Drip locally (onUpload)
+ * - ALSO posts to server for canonical storage + aggregation (if user is present)
  */
 
 function parseCSV(text) {
-  // Minimal CSV parser (handles simple CSV; good enough for MVP)
   const lines = String(text || "")
     .replace(/\r/g, "")
     .split("\n")
@@ -62,7 +63,7 @@ function normalizeAnyRows(rows) {
           : amountRaw
       );
 
-      const date = (r.date || r.Date || r.posted || r.Posted || "")
+      const date = (r.date || r.Date || r.posted || r.Posted || r.posted_at || r.PostedAt || "")
         .toString()
         .trim();
 
@@ -75,7 +76,7 @@ function normalizeAnyRows(rows) {
     .filter((x) => x.merchant && Number.isFinite(x.amount));
 }
 
-export default function TransactionUploader({ onUpload }) {
+export default function TransactionUploader({ user, onUpload }) {
   const [file, setFile] = useState(null);
   const [lastStatus, setLastStatus] = useState("");
 
@@ -86,6 +87,39 @@ export default function TransactionUploader({ onUpload }) {
     setFile(e.target.files?.[0] || null);
     setLastStatus("");
   };
+
+  async function postToServer({ normalizedRows, filename }) {
+    // No auth? Just skip server ingestion (Drip still works)
+    if (!user?.getIdToken) return { ok: false, skipped: true };
+
+    const token = await user.getIdToken();
+    const res = await fetch("/.netlify/functions/ingest-upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        source: "upload",
+        filename: filename || "",
+        rows: normalizedRows
+      })
+    });
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+
+    if (!res.ok) {
+      const msg = data?.error || `Server ingest failed (HTTP ${res.status})`;
+      throw new Error(msg);
+    }
+
+    return { ok: true, data };
+  }
 
   const handleUpload = async () => {
     if (!file) return alert("Choose a file first.");
@@ -98,8 +132,25 @@ export default function TransactionUploader({ onUpload }) {
         const text = await file.text();
         const parsed = JSON.parse(text);
         const normalized = normalizeAnyRows(parsed);
+
+        // ✅ Local Drip unchanged
         onUpload?.(normalized);
-        setLastStatus(`Loaded ${normalized.length} rows from JSON.`);
+
+        // ✅ Server canonical ingest (best effort)
+        try {
+          const r = await postToServer({ normalizedRows: normalized, filename: file.name });
+          if (r?.skipped) {
+            setLastStatus(`Loaded ${normalized.length} rows from JSON. (Not logged in — skipped server ingest.)`);
+          } else {
+            setLastStatus(
+              `Loaded ${normalized.length} rows from JSON. Server ingest ok (batch: ${r?.data?.batchId || "—"}).`
+            );
+          }
+        } catch (e) {
+          console.warn("Server ingest failed:", e);
+          setLastStatus(`Loaded ${normalized.length} rows from JSON. (Server ingest failed: ${e?.message || "error"})`);
+        }
+
         return;
       }
 
@@ -108,8 +159,25 @@ export default function TransactionUploader({ onUpload }) {
         const text = await file.text();
         const rows = parseCSV(text);
         const normalized = normalizeAnyRows(rows);
+
+        // ✅ Local Drip unchanged
         onUpload?.(normalized);
-        setLastStatus(`Loaded ${normalized.length} rows from CSV.`);
+
+        // ✅ Server canonical ingest (best effort)
+        try {
+          const r = await postToServer({ normalizedRows: normalized, filename: file.name });
+          if (r?.skipped) {
+            setLastStatus(`Loaded ${normalized.length} rows from CSV. (Not logged in — skipped server ingest.)`);
+          } else {
+            setLastStatus(
+              `Loaded ${normalized.length} rows from CSV. Server ingest ok (batch: ${r?.data?.batchId || "—"}).`
+            );
+          }
+        } catch (e) {
+          console.warn("Server ingest failed:", e);
+          setLastStatus(`Loaded ${normalized.length} rows from CSV. (Server ingest failed: ${e?.message || "error"})`);
+        }
+
         return;
       }
 

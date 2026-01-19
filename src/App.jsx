@@ -30,8 +30,7 @@ export default function App() {
         setUserDoc(docData || null);
       } catch (e) {
         console.error("Auth -> Firestore user bootstrap error:", e);
-        // Don’t block app if Firestore fails; still allow basic usage
-        setUserDoc(null);
+        setUserDoc(null); // don't block app
       } finally {
         setBooting(false);
       }
@@ -40,10 +39,17 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  if (booting) return null;
+  if (booting) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+        <div style={{ fontWeight: 900, color: "var(--s-primary, #123764)" }}>Loading Sphere…</div>
+      </div>
+    );
+  }
+
   if (!firebaseUser) return <Login />;
 
-  // ✅ Use a plain “user context” object for your UI components
+  // ✅ pass “server-backed user context”
   const userCtx = {
     uid: firebaseUser.uid,
     email: firebaseUser.email,
@@ -58,7 +64,6 @@ export default function App() {
         <button onClick={() => signOut(auth)}>Log Out</button>
       </div>
 
-      {/* IMPORTANT: pass userCtx, not raw firebaseUser */}
       <Home user={userCtx} />
     </div>
   );

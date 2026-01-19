@@ -1,11 +1,11 @@
-// netlify/functions/community.js
+// netlify/functions/community-flow.js
 //
 // Admin-controlled community aggregate feed for Monthly Flow (Paid • Preview).
 // Free-MVP mode: serves deterministic mock aggregate data + ~200 community runner items.
 // Production intent: replace generateMockCommunityData() with scheduled aggregation pipeline.
 //
 // Endpoint:
-//   /.netlify/functions/community
+//   /.netlify/functions/community-flow
 //
 // Response shape:
 //   { ok: true, data: { asOf, narrativeHighestSector, topSectors: [...], communityRunners: [...] } }
@@ -156,24 +156,10 @@ function generateCommunityRunners(asOf, topSectors) {
   return runners.slice(0, 200);
 }
 
-function generateMockCommunityData() {
-  const asOf = isoDate(new Date());
-  const topSectors = generateTopSectors(asOf);
-  const narrativeHighestSector = topSectors?.[0]?.sector || "—";
-  const communityRunners = generateCommunityRunners(asOf, topSectors);
-
-  return {
-    asOf,
-    narrativeHighestSector,
-    topSectors,
-    communityRunners
-  };
-}
-
-exports.handler = async function handler(event) {
+// netlify/functions/community-flow.js
+exports.handler = async (event) => {
   try {
-    // In MVP: always return mock aggregate data.
-    // In production: replace generateMockCommunityData() with real aggregation.
+    // MVP: mock data (replace later with Firestore aggregation)
     const data = generateMockCommunityData();
 
     return {
@@ -182,16 +168,24 @@ exports.handler = async function handler(event) {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store"
       },
-      body: JSON.stringify({ ok: true, data })
+      body: JSON.stringify(data) // IMPORTANT: return ARRAY, not {ok:true,data}
     };
   } catch (e) {
     return {
-      statusCode: 200,
+      statusCode: 500,
       headers: { "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({
-        ok: false,
-        error: "Failed to generate community feed."
-      })
+      body: JSON.stringify({ error: "Failed to generate community feed." })
     };
   }
 };
+
+// ---- mock generator ----
+function generateMockCommunityData() {
+  return [
+    { ticker: "AAPL", sector: "Technology", signal: "High spend concentration · Medium breadth · Stable", count: 41, date: new Date().toISOString().slice(0,10),
+      users: 40, events: 420, maxUserShare: 0.06, top3Share: 0.18, deltaPct: 0.22, eligibility: { passed: true, reasons: [] } },
+    { ticker: "MSFT", sector: "Technology", signal: "Broad-based · High breadth · Stable", count: 37, date: new Date().toISOString().slice(0,10),
+      users: 52, events: 510, maxUserShare: 0.05, top3Share: 0.16, deltaPct: 0.12, eligibility: { passed: true, reasons: [] } }
+  ];
+}
+
