@@ -2,83 +2,270 @@
 import { useMemo, useState } from "react";
 
 /**
- * MVP uploader:
- * - Accepts CSV + JSON (Netlify-safe)
- * - Provides "Download CSV template" below Choose file
- * - Still feeds Drip locally (onUpload)
- * - ALSO posts to server for canonical storage + aggregation (if user is present)
+ * MVP uploader (practical rules):
+ * - Accept CSV + JSON
+ * - Parses common bank exports, including:
+ *   - merchant/amount/date/description
+ *   - Details | Posting Date | Description | Amount | Type
+ * - Supports comma-separated OR tab-separated files (many banks export TSV-ish)
+ * - Treats SPEND as:
+ *    ✅ DEBIT rows when details explicitly says debit (if available)
+ *    ✅ negative Amount rows (fallback)
+ *    ✅ positive Amount rows ONLY when clearly a refund/chargeback/return
+ * - Excludes:
+ *    ❌ income credits
+ *    ❌ transfers
+ *    ❌ credit card payments
+ *    ❌ cash app / zelle / venmo peer transfers (best-effort)
+ *
+ * Output rows (normalized):
+ *   { merchant, amount, date, description }
+ * where amount is POSITIVE for spend, NEGATIVE for refunds (optional netting).
  */
 
-function parseCSV(text) {
-  const lines = String(text || "")
-    .replace(/\r/g, "")
+function stripOuterQuotes(s) {
+  const x = String(s ?? "").trim();
+  if ((x.startsWith('"') && x.endsWith('"')) || (x.startsWith("'") && x.endsWith("'"))) return x.slice(1, -1).trim();
+  return x;
+}
+
+function normalizeHeader(h) {
+  return String(h || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+// Minimal CSV/TSV row splitter that respects quotes.
+function splitRow(line, delimiter) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      // double-quote escape: ""
+      const next = line[i + 1];
+      if (inQuotes && next === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && ch === delimiter) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+
+    cur += ch;
+  }
+
+  out.push(cur);
+  return out;
+}
+
+function detectDelimiter(headerLine) {
+  const line = String(headerLine || "");
+  // Prefer tabs if present; lots of bank exports are tab-separated.
+  if (line.includes("\t")) return "\t";
+  if (line.includes(",")) return ",";
+  if (line.includes(";")) return ";";
+  return ","; // default
+}
+
+function parseDelimited(text) {
+  const raw = String(text || "").replace(/\r/g, "");
+  const lines = raw
     .split("\n")
+    .map((l) => l.trimEnd())
     .filter((l) => l.trim().length);
 
   if (lines.length < 2) return [];
 
-  const headers = lines[0].split(",").map((h) => h.trim());
+  const delim = detectDelimiter(lines[0]);
+  const headersRaw = splitRow(lines[0], delim).map((h) => stripOuterQuotes(h).trim());
+  const headersNorm = headersRaw.map((h) => normalizeHeader(h));
+
   const rows = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(","); // MVP-simple
+    const cols = splitRow(lines[i], delim).map((c) => stripOuterQuotes(c).trim());
     const obj = {};
-    headers.forEach((h, idx) => (obj[h] = (cols[idx] ?? "").trim()));
+    for (let j = 0; j < headersRaw.length; j++) {
+      obj[headersRaw[j]] = (cols[j] ?? "").trim();
+      // also add normalized-key alias for easier lookups
+      obj[`__k:${headersNorm[j]}`] = (cols[j] ?? "").trim();
+    }
     rows.push(obj);
   }
+
   return rows;
+}
+
+function pick(obj, keys = []) {
+  for (const k of keys) {
+    // direct
+    if (obj && obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== "") return obj[k];
+    // normalized header alias (for CSV headers)
+    const nk = `__k:${normalizeHeader(k)}`;
+    if (obj && obj[nk] !== undefined && obj[nk] !== null && String(obj[nk]).trim() !== "") return obj[nk];
+  }
+  return "";
+}
+
+function parseAmount(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  // Handle (123.45) as negative
+  const parenNeg = /^\((.*)\)$/.test(s);
+  const inner = parenNeg ? s.replace(/^\(|\)$/g, "") : s;
+
+  // remove currency + commas
+  const cleaned = inner.replace(/[$,]/g, "").trim();
+
+  // allow leading +/-
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+
+  return parenNeg ? -Math.abs(n) : n;
+}
+
+// Best-effort “not consumption” filter
+function looksLikeNonConsumption(desc, details, type) {
+  const s = `${desc} ${details} ${type}`.toLowerCase();
+
+  // transfers / payments / moving money around
+  const patterns = [
+    "payment",
+    "autopay",
+    "auto pay",
+    "paymnt",
+    "pmt",
+    "credit card payment",
+    "cc payment",
+    "thank you",
+    "cardmember serv",
+    "online payment",
+    "bill pay",
+    "transfer",
+    "xfer",
+    "to savings",
+    "from savings",
+    "ach transfer",
+    "zelle",
+    "venmo",
+    "cash app",
+    "cashapp",
+    "paypal *transfer",
+    "apple cash",
+    "google pay transfer",
+    "wire transfer",
+    "withdrawal", // optional: many treat as non-merchant consumption
+    "atm"
+  ];
+
+  return patterns.some((p) => s.includes(p));
+}
+
+// Positive credits that are “okay” to include as negative spend (refunds)
+// (We convert these to NEGATIVE spend to net down your spend.)
+function looksLikeRefund(desc, details) {
+  const s = `${desc} ${details}`.toLowerCase();
+  const patterns = ["refund", "return", "reversal", "chargeback", "credit voucher", "adjustment"];
+  return patterns.some((p) => s.includes(p));
 }
 
 function normalizeAnyRows(rows) {
   const arr = Array.isArray(rows) ? rows : [];
+
   return arr
     .map((r) => {
-      const merchant =
-        (r.merchant ||
-          r.Merchant ||
-          r.name ||
-          r.Name ||
-          r.description ||
-          r.Description ||
-          r.payee ||
-          r.Payee ||
-          "")
-          .toString()
-          .trim();
+      // Merchant: bank "Description" is usually the merchant
+      const description = stripOuterQuotes(
+        pick(r, ["description", "Description", "merchant", "Merchant", "name", "Name", "payee", "Payee", "Details"])
+      ).trim();
 
-      const amountRaw =
-        r.amount ??
-        r.Amount ??
-        r.value ??
-        r.Value ??
-        r.amt ??
-        r.Amt ??
-        r.debit ??
-        r.Debit ??
-        0;
+      // Sometimes "Details" = CREDIT/DEBIT flag; sometimes "Type" = ACH/DEBIT CARD; we read both
+      const details = stripOuterQuotes(pick(r, ["details", "Details"])).trim();
+      const type = stripOuterQuotes(pick(r, ["type", "Type"])).trim();
 
-      const amount = Number(
-        typeof amountRaw === "string"
-          ? amountRaw.replace(/[$,]/g, "").trim()
-          : amountRaw
-      );
+      // Date: Posting Date most common
+      const date = stripOuterQuotes(
+        pick(r, ["date", "Date", "posting date", "Posting Date", "posted", "Posted", "posted_at", "PostedAt"])
+      ).trim();
 
-      const date = (r.date || r.Date || r.posted || r.Posted || r.posted_at || r.PostedAt || "")
-        .toString()
-        .trim();
+      // Amount
+      const amountRaw = pick(r, ["amount", "Amount", "value", "Value"]);
+      const amt = parseAmount(amountRaw);
 
-      const description = (r.description || r.Description || r.memo || r.Memo || "")
-        .toString()
-        .trim();
+      // Merchant field: prefer Description when present; else use parsed description
+      const merchant = stripOuterQuotes(
+        pick(r, ["merchant", "Merchant", "description", "Description", "name", "Name", "payee", "Payee"])
+      ).trim() || description;
 
-      return { merchant, amount, date, description, raw: r };
+      if (!merchant || amt === null) return null;
+
+      // Filter obvious non-consumption
+      if (looksLikeNonConsumption(merchant, details, type)) return null;
+
+      // Determine debit/credit when "Details" explicitly provides it
+      const detailsLower = details.toLowerCase();
+      const explicitDebit = detailsLower.includes("debit");
+      const explicitCredit = detailsLower.includes("credit");
+
+      // Decide if we should include the row and what spend amount should be.
+      // Goal: spend > 0, refunds < 0, ignore income credits.
+      let spend = null;
+
+      if (explicitDebit) {
+        // DEBIT: treat as purchase spend
+        spend = Math.abs(amt);
+      } else if (explicitCredit) {
+        // CREDIT: only include if it looks like a refund/chargeback; otherwise ignore (income/transfer)
+        if (looksLikeRefund(merchant, details)) {
+          spend = -Math.abs(amt);
+        } else {
+          return null;
+        }
+      } else {
+        // No explicit debit/credit:
+        // - negative amount => spend
+        // - positive amount => ignore unless refund-like
+        if (amt < 0) {
+          spend = Math.abs(amt);
+        } else {
+          if (looksLikeRefund(merchant, details)) {
+            spend = -Math.abs(amt);
+          } else {
+            return null;
+          }
+        }
+      }
+
+      // Final normalized object: keep original merchant/description both
+      return {
+        merchant: merchant.replace(/\s+/g, " ").trim(),
+        amount: spend, // POSITIVE spend; NEGATIVE refunds
+        date,
+        description: description || merchant
+      };
     })
+    .filter(Boolean)
+    // keep only rows with finite numeric amount (allow negative refunds)
     .filter((x) => x.merchant && Number.isFinite(x.amount));
 }
 
 export default function TransactionUploader({ user, onUpload }) {
   const [file, setFile] = useState(null);
   const [lastStatus, setLastStatus] = useState("");
+  const [busy, setBusy] = useState(false);
 
   // This file must exist at: public/templates/transactions_template.csv
   const templateHref = useMemo(() => "/templates/transactions_template.csv", []);
@@ -88,11 +275,17 @@ export default function TransactionUploader({ user, onUpload }) {
     setLastStatus("");
   };
 
-  async function postToServer({ normalizedRows, filename }) {
-    // No auth? Just skip server ingestion (Drip still works)
-    if (!user?.getIdToken) return { ok: false, skipped: true };
+  async function sendIngest({ normalizedRows, filename }) {
+    if (!user?.getIdToken) return false;
 
-    const token = await user.getIdToken();
+    let token = null;
+    try {
+      token = await user.getIdToken();
+    } catch {
+      return false;
+    }
+    if (!token) return false;
+
     const res = await fetch("/.netlify/functions/ingest-upload", {
       method: "POST",
       headers: {
@@ -106,85 +299,60 @@ export default function TransactionUploader({ user, onUpload }) {
       })
     });
 
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      // ignore
-    }
-
-    if (!res.ok) {
-      const msg = data?.error || `Server ingest failed (HTTP ${res.status})`;
-      throw new Error(msg);
-    }
-
-    return { ok: true, data };
+    return res.ok;
   }
 
   const handleUpload = async () => {
     if (!file) return alert("Choose a file first.");
+    if (busy) return;
+
+    setBusy(true);
+    setLastStatus("Bubbling your upload into Sphere…");
 
     try {
-      const name = file.name.toLowerCase();
+      const name = (file.name || "").toLowerCase();
 
-      // JSON
+      let normalized = [];
+      let kind = "";
+
       if (name.endsWith(".json")) {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        const normalized = normalizeAnyRows(parsed);
-
-        // ✅ Local Drip unchanged
-        onUpload?.(normalized);
-
-        // ✅ Server canonical ingest (best effort)
-        try {
-          const r = await postToServer({ normalizedRows: normalized, filename: file.name });
-          if (r?.skipped) {
-            setLastStatus(`Loaded ${normalized.length} rows from JSON. (Not logged in — skipped server ingest.)`);
-          } else {
-            setLastStatus(
-              `Loaded ${normalized.length} rows from JSON. Server ingest ok (batch: ${r?.data?.batchId || "—"}).`
-            );
-          }
-        } catch (e) {
-          console.warn("Server ingest failed:", e);
-          setLastStatus(`Loaded ${normalized.length} rows from JSON. (Server ingest failed: ${e?.message || "error"})`);
-        }
-
-        return;
-      }
-
-      // CSV
-      if (name.endsWith(".csv")) {
+        normalized = normalizeAnyRows(parsed);
+        kind = "JSON";
+      } else if (name.endsWith(".csv")) {
         const text = await file.text();
-        const rows = parseCSV(text);
-        const normalized = normalizeAnyRows(rows);
-
-        // ✅ Local Drip unchanged
-        onUpload?.(normalized);
-
-        // ✅ Server canonical ingest (best effort)
-        try {
-          const r = await postToServer({ normalizedRows: normalized, filename: file.name });
-          if (r?.skipped) {
-            setLastStatus(`Loaded ${normalized.length} rows from CSV. (Not logged in — skipped server ingest.)`);
-          } else {
-            setLastStatus(
-              `Loaded ${normalized.length} rows from CSV. Server ingest ok (batch: ${r?.data?.batchId || "—"}).`
-            );
-          }
-        } catch (e) {
-          console.warn("Server ingest failed:", e);
-          setLastStatus(`Loaded ${normalized.length} rows from CSV. (Server ingest failed: ${e?.message || "error"})`);
-        }
-
+        const rows = parseDelimited(text);
+        normalized = normalizeAnyRows(rows);
+        kind = "CSV";
+      } else {
+        setLastStatus("That file type isn’t supported yet. Please upload a .csv or .json.");
         return;
       }
 
-      alert("Unsupported file type. Upload .csv or .json for this MVP build.");
+      if (!normalized.length) {
+        setLastStatus(
+          "We couldn’t find any usable spend rows in that file. Tip: make sure it includes a Description/merchant and Amount, and that purchases are debits or negative amounts."
+        );
+        return;
+      }
+
+      // Instant UI update
+      onUpload?.(normalized);
+
+      // Secure ingest (required for your live app flow)
+      const ok = await sendIngest({ normalizedRows: normalized, filename: file.name });
+
+      if (ok) {
+        setLastStatus(`Upload complete — ${normalized.length} spend rows (${kind}). Your data is now flowing into Sphere.`);
+      } else {
+        setLastStatus("Your bubble popped. Please try again in a moment.");
+      }
     } catch (err) {
       console.error(err);
-      alert(`Upload failed: ${err?.message || "Unknown error"}`);
+      setLastStatus("Your bubble popped. Please try again in a moment.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -201,7 +369,9 @@ export default function TransactionUploader({ user, onUpload }) {
       </div>
 
       <div style={{ marginTop: "0.75rem" }}>
-        <button onClick={handleUpload}>Upload</button>
+        <button onClick={handleUpload} disabled={busy}>
+          {busy ? "Uploading…" : "Upload"}
+        </button>
       </div>
 
       {lastStatus ? (
@@ -211,7 +381,12 @@ export default function TransactionUploader({ user, onUpload }) {
       ) : null}
 
       <p style={{ marginTop: "0.75rem", fontSize: "0.9rem" }}>
-        Columns supported: <b>merchant</b>, <b>amount</b>, optional <b>date</b>/<b>description</b>. No category needed.
+        Formats supported:
+        <br />
+        • Simple: <b>Date</b>, <b>Merchant</b>, <b>Amount</b>, optional <b>description</b>
+        <br />
+        • Bank: <b>Details</b>, <b>Posting Date</b>, <b>Description</b>, <b>Amount</b>, <b>Type</b>
+        <br />
       </p>
     </div>
   );

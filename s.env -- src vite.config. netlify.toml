@@ -1,0 +1,12 @@
+[35mnetlify/data/community-flow.json[m[36m:[m[32m12[m[36m:[m  const raw = process.env.[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m;
+[35mnetlify/data/community-flow.json[m[36m:[m[32m13[m[36m:[m  if (!raw) throw new Error("Missing [1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m env var");
+[35mnetlify/data/community-flow.json[m[36m:[m[32m19[m[36m:[m    throw new Error("[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m is not valid JSON");
+[35mnetlify/functions/ingest-upload.cjs[m[36m:[m[32m8[m[36m:[m  const raw = process.env.[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m;
+[35mnetlify/functions/ingest-upload.cjs[m[36m:[m[32m9[m[36m:[m  if (!raw) throw new Error("Missing [1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m env var");
+[35mnetlify/functions/rebuild-flow-window.cjs[m[36m:[m[32m12[m[36m:[m  const raw = process.env.[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m;
+[35mnetlify/functions/rebuild-flow-window.cjs[m[36m:[m[32m13[m[36m:[m  if (!raw) throw new Error("Missing [1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m env var");
+[35mnetlify/functions/rebuild-flow-window.cjs[m[36m:[m[32m19[m[36m:[m    throw new Error("[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m is not valid JSON");
+[35mnetlify/functions/stripe-webhook.js[m[36m:[m[32m10[m[36m:[m  // ✅ Put the FULL JSON service account in Netlify env as [1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m
+[35mnetlify/functions/stripe-webhook.js[m[36m:[m[32m11[m[36m:[m  const raw = process.env.[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m;
+[35mnetlify/functions/stripe-webhook.js[m[36m:[m[32m14[m[36m:[m    throw new Error("Missing [1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m env var (service account JSON).");
+[35mnetlify/functions/stripe-webhook.js[m[36m:[m[32m21[m[36m:[m    throw new Error("[1;31mFIREBASE_ADMIN_SERVICE_ACCOUNT[m is not valid JSON.");

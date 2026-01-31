@@ -1,4 +1,4 @@
-// FILE: netlify/functions/community-flow.js
+// FILE: netlify/functions/flow-signals-feed.js
 // CommonJS (Netlify-safe)
 // Public-ish read endpoint for the Flow feed (Option A).
 // Returns ARRAY of items your MonthlyFlow.jsx already expects.

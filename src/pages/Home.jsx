@@ -10,8 +10,8 @@ import AlignmentSnapshotDrip from "../components/AlignmentSnapshotDrip";
 import SphericalFeed from "../components/SphericalFeed";
 import Admin from "./Admin";
 
-import { inferTickerFromMerchant } from "../utils/mappings";
-import { PageShell, Tabs, Card, Pill } from "../components/ui/UiKit";
+import { classifyMerchant } from "../utils/merchantSectorMap";
+import { PageShell, Tabs, Card } from "../components/ui/UiKit";
 import { SectionBand, usePersistedBool, UI, Badge } from "../components/SectionUI";
 import sphereLogo from "../assets/sphere-logo.png";
 
@@ -181,7 +181,8 @@ function UpgradeModal({ open, onClose, userEmail, userUid }) {
         </div>
 
         <div style={{ marginTop: "0.9rem", fontSize: UI.FONT_MUTED, opacity: 0.9, lineHeight: 1.45 }}>
-          Privacy: Flow works using anonymized, aggregated patterns from participating users. Transactions shown in community views are never attributed to an individual. You can opt out anytime.
+          Privacy: Flow works using anonymized, aggregated patterns from participating users. Transactions shown in community views are never
+          attributed to an individual. You can opt out anytime.
         </div>
       </div>
     </div>
@@ -256,7 +257,7 @@ function FlowGate({ hasAccess, onUpgradeClick, children }) {
   );
 }
 
-export default function Home({ user }) {
+export default function Home({ user, firebaseUser }) {
   const [activeTab, setActiveTab] = useState("drip");
 
   // ✅ Admin = user has a Firestore doc at admins/{uid}
@@ -312,15 +313,27 @@ export default function Home({ user }) {
   const [personalRunners, setPersonalRunners] = useState([]);
   const [sectorLeaders, setSectorLeaders] = useState([]);
 
+  // ✅ Tick ers "where available" come from classifyMerchant()
   const userSpendTickers = useMemo(() => {
-    const set = new Set();
-    for (const tx of transactions || []) {
-      const m = String(tx.merchant || tx.name || "").trim();
-      const t = inferTickerFromMerchant(m);
-      if (t) set.add(t.toUpperCase());
-    }
-    return Array.from(set).sort();
-  }, [transactions]);
+  const set = new Set();
+
+  for (const tx of transactions || []) {
+    const amt = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
+    if (!Number.isFinite(amt)) continue;
+
+    // Spend only
+    if (amt >= 0) continue;
+
+    const m = String(tx.merchant || tx.Merchant || tx.name || tx.Name || "").trim();
+    if (!m) continue;
+
+    const classified = classifyMerchant(m);
+    const t = classified?.ticker ? String(classified.ticker).toUpperCase().trim() : "";
+    if (t) set.add(t);
+  }
+
+  return Array.from(set).sort();
+}, [transactions]);
 
   const handleUpgradeClick = () => setUpgradeOpen(true);
 
@@ -360,19 +373,13 @@ export default function Home({ user }) {
           </div>
         </div>
       }
-      subtitle={null}
-      rightSlot={
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Pill>{user?.email || "—"}</Pill>
-        </div>
-      }
     >
       <UpgradeModal
-  open={upgradeOpen}
-  onClose={() => setUpgradeOpen(false)}
-  userEmail={user?.email || ""}
-  userUid={user?.uid || ""}
-/>
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        userEmail={user?.email || ""}
+        userUid={user?.uid || ""}
+      />
 
       <Tabs value={activeTab} onChange={setActiveTab} tabs={tabs} />
 
@@ -380,7 +387,12 @@ export default function Home({ user }) {
       {activeTab === "drip" && (
         <>
           <Section label="Upload Transactions" storageKey="home:upload">
-            <TransactionUploader user={user} onUpload={setTransactions} />
+            <TransactionUploader
+              user={firebaseUser}
+              onUpload={(rows) => {
+                setTransactions(rows);
+              }}
+            />
           </Section>
 
           <Section label="Monthly Drip" storageKey="home:drip">
@@ -410,11 +422,7 @@ export default function Home({ user }) {
           </Section>
 
           <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
-            <AlignmentSnapshotDrip
-              transactions={transactions}
-              sectorLeaders={sectorLeaders}
-              personalRunners={personalRunners}
-            />
+            <AlignmentSnapshotDrip transactions={transactions} sectorLeaders={sectorLeaders} personalRunners={personalRunners} />
 
             {!hasFlowAccess && simpleMode && (
               <div style={{ marginTop: "1rem", textAlign: "center" }}>
@@ -446,7 +454,6 @@ export default function Home({ user }) {
         <FlowGate
           hasAccess={hasFlowAccess}
           onUpgradeClick={() => {
-            // ✅ Stripe live: open modal -> checkout
             handleUpgradeClick();
           }}
         >
@@ -510,11 +517,7 @@ export default function Home({ user }) {
       {/* SPHERICAL */}
       {activeTab === "spherical" && (
         <Section label="Spherical — Community Feed" storageKey="home:spherical" defaultOpen={true}>
-          <SphericalFeed
-            userEmail={user?.email || ""}
-            // ✅ Make Spherical CTA behave like Unlock Flow:
-            onUpgradeClick={() => handleUpgradeClick()}
-          />
+          <SphericalFeed userEmail={user?.email || ""} onUpgradeClick={() => handleUpgradeClick()} />
         </Section>
       )}
 

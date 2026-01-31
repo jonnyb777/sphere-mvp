@@ -1,4 +1,4 @@
-// FILE: netlify/functions/ingest-upload.js
+// FILE: netlify/functions/ingest-upload.cjs
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 
@@ -23,28 +23,137 @@ initAdmin();
 
 const db = admin.firestore();
 const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+const inc = (n) => admin.firestore.FieldValue.increment(n);
 
 // -------------------------
 // Defensible thresholds
 // -------------------------
 const THRESH = {
-  // hard reject (don’t activate; still store batch record but marked rejected)
   MIN_UNIQUE_TX: 10,
   MIN_DATE_PARSE: 0.85,
   MIN_AMOUNT_PARSE: 0.98,
-  MIN_MERCHANT_PARSE: 0.90,
+  MIN_MERCHANT_PARSE: 0.9,
 
-  // soft flag (store + can be overridden later, but won’t auto-activate)
-  MIN_COVERAGE_DAYS_RATIO: 0.60, // 60% of days in window
+  MIN_COVERAGE_DAYS_RATIO: 0.6,
   MIN_COVERAGE_DAYS_ABS_30D: 18,
   MAX_DUP_ROW_RATE_SOFT: 0.35,
   MAX_REFUND_RATE_SOFT: 0.25,
 
-  // window replacement anti-manipulation
-  MIN_JACCARD_TO_REPLACE: 0.70,
-  MAX_SPEND_DELTA_TO_REPLACE: 0.40, // 40%
+  MIN_JACCARD_TO_REPLACE: 0.7,
+  MAX_SPEND_DELTA_TO_REPLACE: 0.4,
   MAX_ACTIVATION_ATTEMPTS_24H: 2
 };
+
+// -------------------------
+// Merchant classification (server-side)
+// -------------------------
+function normalizeMerchantName(raw = "") {
+  return String(raw || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[^\w\s&'+\-./]/g, "")
+    .trim();
+}
+
+const MERCHANT_RULES = [
+  { re: /\bwendy'?s\b|\bwendys\b/i, sector: "Restaurants", ticker: "WEN" },
+  { re: /\bmcdonald'?s\b|\bmcdonalds\b|\bmcd\b/i, sector: "Restaurants", ticker: "MCD" },
+  { re: /\bstarbucks\b|\bsbux\b/i, sector: "Restaurants", ticker: "SBUX" },
+  { re: /\bchipotle\b|\bcmg\b/i, sector: "Restaurants", ticker: "CMG" },
+  { re: /\bdomino'?s\b|\bdominos\b|\bdpz\b/i, sector: "Restaurants", ticker: "DPZ" },
+  { re: /\byum\b|\byum brands\b|\btaco bell\b|\bkfc\b|\bpizza hut\b/i, sector: "Restaurants", ticker: "YUM" },
+
+  { re: /\btrader joe'?s\b|\btrader joes\b/i, sector: "Grocery", ticker: null },
+  { re: /\bwhole foods\b|\bwholefoods\b/i, sector: "Grocery", ticker: "AMZN" },
+  { re: /\bkroger\b|\bfred meyer\b|\bralphs\b|\bharris teeter\b/i, sector: "Grocery", ticker: "KR" },
+  { re: /\balbertsons\b|\bsafeway\b|\bvons\b|\bpavilions\b|\bacme\b/i, sector: "Grocery", ticker: "ACI" },
+  { re: /\binstacart\b/i, sector: "Grocery", ticker: null },
+
+  { re: /\bwalmart\b|\bwal-mart\b/i, sector: "Big Box Retail", ticker: "WMT" },
+  { re: /\btarget\b/i, sector: "Big Box Retail", ticker: "TGT" },
+  { re: /\bcostco\b/i, sector: "Big Box Retail", ticker: "COST" },
+  { re: /\bsams club\b|\bsam's club\b/i, sector: "Big Box Retail", ticker: "WMT" },
+
+  { re: /\bchevron\b/i, sector: "Gas Stations", ticker: "CVX" },
+  { re: /\bexxon\b|\bexxonmobil\b|\bmobil\b/i, sector: "Gas Stations", ticker: "XOM" },
+  { re: /\bshell\b/i, sector: "Gas Stations", ticker: null },
+
+  { re: /\bcvs\b|\bcvs pharmacy\b|\bcvs health\b/i, sector: "Pharmacies", ticker: "CVS" },
+  { re: /\bwalgreens\b|\bwalgreen\b|\bduane reade\b/i, sector: "Pharmacies", ticker: "WBA" },
+
+  { re: /\bpg&e\b|\bpge\b|\bpacific gas\b/i, sector: "Utilities", ticker: null },
+  { re: /\bedison\b|\bsce\b|\bsouthern california edison\b/i, sector: "Utilities", ticker: null },
+  { re: /\bcon ed\b|\bconed\b|\bcon edison\b/i, sector: "Utilities", ticker: null },
+
+  { re: /\ballstate\b/i, sector: "Insurance", ticker: "ALL" },
+  { re: /\bprogressive\b/i, sector: "Insurance", ticker: "PGR" },
+  { re: /\blemonade\b/i, sector: "Insurance", ticker: "LMND" },
+
+  { re: /\bverizon\b|\bvzw\b/i, sector: "Telecom", ticker: "VZ" },
+  { re: /\bat&t\b|\batt\b/i, sector: "Telecom", ticker: "T" },
+  { re: /\bt-mobile\b|\btmobile\b/i, sector: "Telecom", ticker: "TMUS" },
+  { re: /\bcomcast\b|\bxfinity\b/i, sector: "Telecom", ticker: "CMCSA" },
+
+  { re: /\bnetflix\b/i, sector: "Subscriptions", ticker: "NFLX" },
+  { re: /\bspotify\b/i, sector: "Subscriptions", ticker: "SPOT" },
+  { re: /\bhulu\b|\bdisney\+?\b|\bdisney plus\b/i, sector: "Subscriptions", ticker: "DIS" },
+  { re: /\bamazon prime\b|\bprime video\b/i, sector: "Subscriptions", ticker: "AMZN" },
+
+  { re: /\buber\b|\buber\*trip\b|\buber trip\b/i, sector: "Transportation", ticker: "UBER" },
+  { re: /\blyft\b/i, sector: "Transportation", ticker: "LYFT" },
+
+  { re: /\bairbnb\b/i, sector: "Travel", ticker: "ABNB" },
+  { re: /\bbooking\.com\b|\bbookingcom\b|\bpriceline\b/i, sector: "Travel", ticker: "BKNG" },
+  { re: /\bexpedia\b/i, sector: "Travel", ticker: "EXPE" },
+
+  { re: /\bapple\b|\bapple\.com\/bill\b|\bicloud\b|\bapp store\b/i, sector: "Technology", ticker: "AAPL" },
+  { re: /\bmicrosoft\b|\bmsft\b|\bxbox\b/i, sector: "Technology", ticker: "MSFT" },
+  { re: /\bgoogle\b|\balphabet\b|\bgoogl\b|\bgoogle play\b/i, sector: "Technology", ticker: "GOOGL" },
+  { re: /\bmeta\b|\bfacebook\b|\binstagram\b/i, sector: "Technology", ticker: "META" },
+
+  { re: /\bamazon\b|\bamzn\b/i, sector: "Consumer & Retail", ticker: "AMZN" }
+];
+
+function keywordHeuristics(normalized) {
+  const m = String(normalized || "");
+
+  if (/\bpharmacy\b|\bdrugstore\b|\bprescription\b|\brx\b/.test(m)) return { sector: "Pharmacies" };
+  if (/\bclinic\b|\burgen(t)? care\b|\bhospital\b|\bhealth\b|\bdent(al|ist)\b/.test(m)) return { sector: "Healthcare" };
+
+  if (/\bgrocery\b|\bsupermarket\b|\bproduce\b|\bbutcher\b/.test(m)) return { sector: "Grocery" };
+  if (/\bgas\b|\bgasoline\b|\bfuel\b|\bdiesel\b|\bpump\b/.test(m)) return { sector: "Gas Stations" };
+  if (/\butility\b|\belectric\b|\bpower\b|\bwater\b|\bsewer\b|\btrash\b|\brefuse\b/.test(m)) return { sector: "Utilities" };
+  if (/\bwireless\b|\bcell(ular)?\b|\bmobile plan\b|\bbroadband\b|\bcable\b|\binternet\b/.test(m)) return { sector: "Telecom" };
+
+  if (/\binsurance\b|\binsur\b|\bpolicy\b|\bpremium\b|\bins\b|\bprem\b|\bcas\b/.test(m)) return { sector: "Insurance" };
+  if (/\bsubscription\b|\brecurring\b|\bmember(ship)?\b/.test(m)) return { sector: "Subscriptions" };
+
+  if (/\bhotel\b|\bflight\b|\bairline\b|\bcar rental\b|\bresort\b|\bbooking\b|\bexpedia\b/.test(m)) return { sector: "Travel" };
+  if (/\brestaurant\b|\bcafe\b|\bcoffee\b|\bpizza\b|\bburger\b|\bgrill\b/.test(m)) return { sector: "Restaurants" };
+  if (/\btransit\b|\btrain\b|\bbus\b|\btoll\b|\bparking\b/.test(m)) return { sector: "Transportation" };
+
+  return null;
+}
+
+function classifyMerchant(merchant = "") {
+  const m = normalizeMerchantName(merchant);
+  if (!m) return { sector: "Other / Unmapped", ticker: null, unmapped: true };
+
+  for (const r of MERCHANT_RULES) {
+    if (r.re.test(m)) {
+      return {
+        sector: r.sector || "Other / Unmapped",
+        ticker: r.ticker || null,
+        unmapped: (r.sector || "Other / Unmapped") === "Other / Unmapped"
+      };
+    }
+  }
+
+  const h = keywordHeuristics(m);
+  if (h?.sector) return { sector: h.sector, ticker: null, unmapped: h.sector === "Other / Unmapped" };
+
+  return { sector: "Other / Unmapped", ticker: null, unmapped: true };
+}
 
 // -------------------------
 // Helpers
@@ -62,7 +171,6 @@ function toISODateAny(raw) {
   const s = String(raw).trim();
   if (!s) return null;
 
-  // MM/DD/YYYY
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) {
     const mm = String(m[1]).padStart(2, "0");
@@ -71,7 +179,6 @@ function toISODateAny(raw) {
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  // YYYY-MM-DD
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) return s;
 
@@ -116,11 +223,11 @@ function jaccard(setA, setB) {
   return uni ? inter / uni : 0;
 }
 
-// ---- auth ----
 async function requireAuth(event) {
-  const auth = event.headers.authorization || event.headers.Authorization || "";
-  const m = String(auth).match(/^Bearer\s+(.+)$/i);
+  const authHeader = event.headers.authorization || event.headers.Authorization || "";
+  const m = String(authHeader).match(/^Bearer\s+(.+)$/i);
   if (!m) throw new Error("Missing Authorization Bearer token");
+
   const token = m[1].trim();
   const decoded = await admin.auth().verifyIdToken(token);
   if (!decoded?.uid) throw new Error("Invalid auth token");
@@ -136,8 +243,14 @@ function jsonResponse(statusCode, obj) {
 }
 
 async function readTxIdSetForBatch(uid, batchId) {
-  // txids stored as docs: uploads/{uid}/batches/{batchId}/txids/{txId}
-  const snap = await db.collection("uploads").doc(uid).collection("batches").doc(batchId).collection("txids").get();
+  const snap = await db
+    .collection("uploads")
+    .doc(uid)
+    .collection("batches")
+    .doc(batchId)
+    .collection("txids")
+    .get();
+
   const set = new Set();
   snap.forEach((d) => set.add(d.id));
   return set;
@@ -191,17 +304,15 @@ exports.handler = async (event) => {
     if (!rows.length) return jsonResponse(400, { error: "No rows provided" });
 
     const windowMeta = computeWindow({ days, asOfISO: asOf, mode });
-
     const batchId = String(body.batchId || "").trim() || sha256Hex(`${uid}|${Date.now()}|${Math.random()}`);
 
-    // Stats + sets
-    const seenExact = new Set(); // txId
-    const coverageDays = new Set(); // distinct YYYY-MM-DD
+    const seenExact = new Set();
+    const coverageDays = new Set();
     let dateOk = 0;
     let amountOk = 0;
     let merchantOk = 0;
 
-    let totalRows = rows.length;
+    const totalRows = rows.length;
     let parsedRows = 0;
     let exactDupes = 0;
 
@@ -209,17 +320,24 @@ exports.handler = async (event) => {
     let incomeTotal = 0;
     let refundCount = 0;
 
-    // We will:
-    // 1) write canonical tx to uploads/{uid}/tx/{txId} (merge)
-    // 2) write txids index under batch: uploads/{uid}/batches/{batchId}/txids/{txId}
-    //
-    // Use WriteBatch in chunks of <= 450 writes for safety.
     const txIdsForBatch = [];
+    const unmappedNorms = new Set();
+    const unmappedSamples = [];
 
     function extractFields(r) {
-      const merchantRaw = r.merchant ?? r.Merchant ?? r.name ?? r.Name ?? r.description ?? r.Description ?? r.payee ?? r.Payee ?? "";
+      const merchantRaw =
+        r.merchant ?? r.Merchant ?? r.name ?? r.Name ?? r.description ?? r.Description ?? r.payee ?? r.Payee ?? "";
       const amountRaw = r.amount ?? r.Amount ?? r.value ?? r.Value ?? r.amt ?? r.Amt ?? r.debit ?? r.Debit ?? 0;
-      const dateRaw = r.date ?? r.Date ?? r.posted ?? r.Posted ?? r.posted_at ?? r.PostedAt ?? r.transactionDate ?? r.TransactionDate ?? "";
+      const dateRaw =
+        r.date ??
+        r.Date ??
+        r.posted ??
+        r.Posted ??
+        r.posted_at ??
+        r.PostedAt ??
+        r.transactionDate ??
+        r.TransactionDate ??
+        "";
 
       const merchantNorm = normalizeMerchant(merchantRaw);
       const dateISO = toISODateAny(dateRaw);
@@ -227,17 +345,24 @@ exports.handler = async (event) => {
       const amt = Number(typeof amountRaw === "string" ? amountRaw.replace(/[$,]/g, "").trim() : amountRaw);
       const amountCents = Number.isFinite(amt) ? Math.round(amt * 100) : null;
 
+      const cls = classifyMerchant(String(merchantRaw || ""));
+      const sector = cls?.sector || "Other / Unmapped";
+      const ticker = cls?.ticker ? String(cls.ticker).toUpperCase().trim() : null;
+      const sectorUnmapped = !!cls?.unmapped || sector === "Other / Unmapped";
+
       return {
         merchantRaw: String(merchantRaw || "").trim(),
         merchantNorm,
         dateISO,
         amt,
         amountCents,
-        description: String(r.description || r.Description || r.memo || r.Memo || "").trim()
+        description: String(r.description || r.Description || r.memo || r.Memo || "").trim(),
+        sector,
+        ticker,
+        sectorUnmapped
       };
     }
 
-    // First pass: compute txIds + stats
     const parsed = [];
     for (const r of rows) {
       const x = extractFields(r);
@@ -249,12 +374,10 @@ exports.handler = async (event) => {
       if (x.merchantNorm) merchantOk += 1;
       if (Number.isFinite(x.amt)) amountOk += 1;
 
-      // only canonicalize if we have date + merchant + amount
       if (!x.dateISO || !x.merchantNorm || !Number.isFinite(x.amt) || x.amountCents === null) continue;
 
       parsedRows += 1;
 
-      // Exact txId: date + merchantNorm + exact cents
       const txId = sha256Hex(`${x.dateISO}|${x.merchantNorm}|${x.amountCents}`);
 
       if (seenExact.has(txId)) {
@@ -263,15 +386,19 @@ exports.handler = async (event) => {
       }
       seenExact.add(txId);
 
-      // Spend/income/refund heuristics (MVP)
-      // If user provides positives for spend, leave as spend.
-      // If negatives appear, treat negative as refund (spend reversal).
       const amtAbs = Math.abs(x.amt);
       if (x.amt < 0) {
-        refundCount += 1;
         spendTotal += amtAbs;
-      } else {
-        spendTotal += amtAbs;
+      } else if (x.amt > 0) {
+        incomeTotal += amtAbs;
+        refundCount += 1; // credit count (keeps existing field name)
+      }
+
+      if (x.sectorUnmapped) {
+        unmappedNorms.add(x.merchantNorm);
+        if (unmappedSamples.length < 30) {
+          unmappedSamples.push({ merchant: x.merchantRaw, merchantNorm: x.merchantNorm });
+        }
       }
 
       parsed.push({ ...x, txId });
@@ -287,7 +414,6 @@ exports.handler = async (event) => {
 
     const refundRate = uniqueTxCount ? refundCount / uniqueTxCount : 0;
 
-    // Hard fail / soft flag
     const hardFail =
       uniqueTxCount < THRESH.MIN_UNIQUE_TX ||
       dateParseRate < THRESH.MIN_DATE_PARSE ||
@@ -295,17 +421,11 @@ exports.handler = async (event) => {
       merchantParseRate < THRESH.MIN_MERCHANT_PARSE;
 
     const minCoverageDays =
-      windowMeta.days === 30
-        ? THRESH.MIN_COVERAGE_DAYS_ABS_30D
-        : Math.floor(windowMeta.days * THRESH.MIN_COVERAGE_DAYS_RATIO);
+      windowMeta.days === 30 ? THRESH.MIN_COVERAGE_DAYS_ABS_30D : Math.floor(windowMeta.days * THRESH.MIN_COVERAGE_DAYS_RATIO);
 
     const flagged =
-      coverageDaysCount < minCoverageDays ||
-      dupRowRate > THRESH.MAX_DUP_ROW_RATE_SOFT ||
-      refundRate > THRESH.MAX_REFUND_RATE_SOFT;
+      coverageDaysCount < minCoverageDays || dupRowRate > THRESH.MAX_DUP_ROW_RATE_SOFT || refundRate > THRESH.MAX_REFUND_RATE_SOFT;
 
-    // Write canonical tx + txids index
-    // (idempotent canonical ledger; lastSeenAt updates)
     const txRoot = db.collection("uploads").doc(uid).collection("tx");
     const batchTxidsRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId).collection("txids");
 
@@ -314,24 +434,27 @@ exports.handler = async (event) => {
       const txRef = txRoot.doc(x.txId);
       const txidRef = batchTxidsRef.doc(x.txId);
 
-      // Canonical tx record: merge (idempotent)
-      writeOps.push({ kind: "set", ref: txRef, data: {
-        uid,
-        postedDate: x.dateISO, // YYYY-MM-DD (string)
-        amount: x.amt,
-        amountCents: x.amountCents,
-        merchant: x.merchantRaw,
-        merchantNorm: x.merchantNorm,
-        description: x.description,
-        source,
-        lastSeenAt: nowTS()
-      }});
+      writeOps.push({
+        ref: txRef,
+        data: {
+          uid,
+          postedDate: x.dateISO,
+          amount: x.amt,
+          amountCents: x.amountCents,
+          merchant: x.merchantRaw,
+          merchantNorm: x.merchantNorm,
+          description: x.description,
+          source,
+          sector: x.sector || "Other / Unmapped",
+          ticker: x.ticker || null,
+          sectorUnmapped: !!x.sectorUnmapped,
+          lastSeenAt: nowTS()
+        }
+      });
 
-      // txid index for this batch
-      writeOps.push({ kind: "set", ref: txidRef, data: { createdAt: nowTS() }});
+      writeOps.push({ ref: txidRef, data: { createdAt: nowTS() } });
     }
 
-    // commit in batches (<= 450 writes)
     for (let i = 0; i < writeOps.length; i += 450) {
       const chunk = writeOps.slice(i, i + 450);
       const batch = db.batch();
@@ -339,7 +462,45 @@ exports.handler = async (event) => {
       await batch.commit();
     }
 
-    // Batch doc (audit record)
+    // Corrected unmapped rollup: counts + proper batch reuse
+    if (unmappedNorms.size) {
+      const unmappedCounts = new Map();
+      for (const x of parsed) {
+        if (!x.sectorUnmapped) continue;
+        const k = x.merchantNorm;
+        if (!k) continue;
+        unmappedCounts.set(k, (unmappedCounts.get(k) || 0) + 1);
+      }
+
+      let batch = db.batch();
+      let ops = 0;
+
+      for (const [mn, c] of unmappedCounts.entries()) {
+        const ref = db.collection("uploads").doc(uid).collection("unmapped_merchants").doc(mn);
+        const sample = parsed.find((p) => p.merchantNorm === mn)?.merchantRaw || null;
+
+        batch.set(
+          ref,
+          {
+            merchantNorm: mn,
+            sampleMerchant: sample,
+            count: inc(c),
+            lastSeenAt: nowTS()
+          },
+          { merge: true }
+        );
+
+        ops += 1;
+        if (ops >= 450) {
+          await batch.commit();
+          batch = db.batch();
+          ops = 0;
+        }
+      }
+
+      if (ops > 0) await batch.commit();
+    }
+
     const batchRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
 
     const batchStats = {
@@ -355,12 +516,13 @@ exports.handler = async (event) => {
       totalSpend: Number.isFinite(spendTotal) ? spendTotal : 0,
       totalIncome: Number.isFinite(incomeTotal) ? incomeTotal : 0,
       refundCount,
-      refundRate
+      refundRate,
+      unmappedCount: unmappedNorms.size,
+      unmappedSample: unmappedSamples
     };
 
     const txSetHash = sha256Hex(txIdsForBatch.slice().sort().join("|"));
 
-    // Activation decision against current active batch for this windowKey
     const windowRef = await getOrInitWindowDoc(uid, windowMeta.windowKey, {
       windowKey: windowMeta.windowKey,
       days: windowMeta.days,
@@ -374,7 +536,6 @@ exports.handler = async (event) => {
     const windowData = windowSnap.data() || {};
     const activeBatchId = windowData.activeBatchId || null;
 
-    // throttling
     let attempts24h = Number(windowData.activationAttempts24h || 0);
     const lastAttemptAt = windowData.lastAttemptAt || null;
     if (!isWithinLast24h(lastAttemptAt)) attempts24h = 0;
@@ -387,7 +548,6 @@ exports.handler = async (event) => {
       reasons.push("HARD_FAIL_PARSE_OR_TOO_SMALL");
     }
     if (flagged) {
-      // flagged batches never auto-activate
       decision = "flagged";
       reasons.push("FLAGGED_QUALITY");
     }
@@ -400,17 +560,15 @@ exports.handler = async (event) => {
     let totalSpendDeltaPct = null;
     let comparedToBatchId = activeBatchId;
 
-    // Only evaluate replacement if there is an active batch and we’re otherwise eligible
     if (activeBatchId && decision === "processed") {
       const newSet = new Set(txIdsForBatch);
       const oldSet = await readTxIdSetForBatch(uid, activeBatchId);
 
       jaccardOverlap = jaccard(newSet, oldSet);
 
-      // old spend pulled from window doc (copied at activation time)
       const oldSpend = Number(windowData?.activeStats?.totalSpend ?? 0);
       const newSpend = Number(batchStats.totalSpend ?? 0);
-      totalSpendDeltaPct = oldSpend > 0 ? (newSpend - oldSpend) / oldSpend : (newSpend > 0 ? 1 : 0);
+      totalSpendDeltaPct = oldSpend > 0 ? (newSpend - oldSpend) / oldSpend : newSpend > 0 ? 1 : 0;
 
       if (jaccardOverlap < THRESH.MIN_JACCARD_TO_REPLACE) {
         decision = "rejected_for_activation";
@@ -426,13 +584,9 @@ exports.handler = async (event) => {
       }
     }
 
-    // If no active batch exists and we passed hard/flag/cooldown, auto-activate
     const shouldActivate = !activeBatchId && decision === "processed";
-
-    // If active exists and we still stayed "processed", we allow replacement
     const shouldReplace = !!activeBatchId && decision === "processed";
 
-    // Activation updates
     let activated = false;
     if (shouldActivate || shouldReplace) {
       activated = true;
@@ -454,8 +608,6 @@ exports.handler = async (event) => {
         { merge: true }
       );
     } else {
-      // record attempt if there *was* an active batch (replacement attempt),
-      // or if no active but we failed (still a meaningful attempt)
       await windowRef.set(
         {
           activationAttempts24h: attempts24h + 1,
@@ -474,6 +626,7 @@ exports.handler = async (event) => {
         filename,
         createdAt: nowTS(),
         processedAt: nowTS(),
+        adminStatus: "active",
         window: {
           ...windowMeta,
           start: windowMeta.startISO,

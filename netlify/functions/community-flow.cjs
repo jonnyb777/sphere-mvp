@@ -1,21 +1,60 @@
-// netlify/functions/community-flow.js
+// FILE: netlify/functions/community-flow.cjs
 //
-// Admin-controlled community aggregate feed for Monthly Flow (Paid • Preview).
-// Free-MVP mode: serves deterministic mock aggregate data + ~200 community runner items.
-// Production intent: replace generateMockCommunityData() with scheduled aggregation pipeline.
+// Real community aggregation from uploads (no mock).
+// Endpoint: /.netlify/functions/community-flow?days=90&mode=trailing&asOf=YYYY-MM-DD
 //
-// Endpoint:
-//   /.netlify/functions/community-flow
+// Returns ARRAY of "community runner" rows (backwards compatible with your current UI)
+// Each row includes eligibility + concentration metrics.
 //
-// Response shape:
-//   { ok: true, data: { asOf, narrativeHighestSector, topSectors: [...], communityRunners: [...] } }
+// IMPORTANT: respects admin deletions:
+//   if (b.adminStatus === "deleted") continue;
+
+const admin = require("firebase-admin");
+
+function initAdmin() {
+  if (admin.apps.length) return;
+
+  const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+  if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+
+  const svc = JSON.parse(raw);
+  if (svc.private_key && typeof svc.private_key === "string") {
+    svc.private_key = svc.private_key.replace(/\\n/g, "\n");
+  }
+
+  admin.initializeApp({
+    credential: admin.credential.cert(svc)
+  });
+}
+initAdmin();
+
+const db = admin.firestore();
+
+function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
 
 function isoDate(d = new Date()) {
   return new Date(d).toISOString().slice(0, 10);
 }
 
-function clamp(n, lo, hi) {
-  return Math.max(lo, Math.min(hi, n));
+function endOfMonthISO(iso) {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+  return new Date(dt.getFullYear(), dt.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+
+function computeWindow({ days, asOfISO, mode }) {
+  const asOf = String(asOfISO || isoDate());
+  const endISO = mode === "monthEnd" ? endOfMonthISO(asOf) : asOf;
+
+  const end = new Date(endISO);
+  const start = new Date(end);
+  start.setDate(start.getDate() - Number(days || 30));
+
+  const startISO = start.toISOString().slice(0, 10);
+  const windowKey = `flow_${Number(days || 30)}d_${mode}_asof_${endISO}`;
+  return { days: Number(days || 30), asOf, mode, startISO, endISO, windowKey };
 }
 
 // Deterministic hash → pseudo random in [0,1)
@@ -25,142 +64,296 @@ function hashToUnit(str) {
     h ^= str.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  // Convert to unsigned and scale
-  const u = (h >>> 0) / 4294967295;
-  return u;
+  return (h >>> 0) / 4294967295;
 }
 
-// Create a deterministic "30D return" from ticker + asOf
+// Until you wire market data, keep deterministic pseudo "return"
 function mockReturn30d(ticker, asOf) {
   const u = hashToUnit(`${ticker}:${asOf}`);
-  // Center around ~0.02 with spread; clamp to [-0.20, +0.35]
-  const r = (u - 0.45) * 0.55; // roughly [-0.25, +0.30]
-  return clamp(r, -0.20, 0.35);
+  const r = (u - 0.45) * 0.55;
+  return clamp(r, -0.2, 0.35);
 }
 
-// Create a deterministic "signal strength" string from sector + ticker
-function mockSignal(sector, ticker, asOf) {
-  const u1 = hashToUnit(`c:${sector}:${asOf}`);
-  const u2 = hashToUnit(`t:${ticker}:${asOf}`);
-  const u3 = hashToUnit(`b:${sector}:${ticker}:${asOf}`);
+function rollupSector(spendSector) {
+  const s = String(spendSector || "Other / Unmapped");
 
-  // Bucket into small label set that reads well in the UI
-  const concentration = u1 > 0.66 ? "High spend concentration" : u1 > 0.33 ? "Moderate concentration" : "Broad-based";
-  const breadth = u3 > 0.66 ? "High breadth" : u3 > 0.33 ? "Medium breadth" : "Narrow breadth";
-  const stability = u2 > 0.66 ? "Stable" : u2 > 0.33 ? "Emerging" : "Spiky";
+  if (s === "Big Box Retail" || s === "Grocery" || s === "Pharmacies" || s === "Utilities") return "Consumer Staples";
+  if (s === "Insurance" || s === "Financials") return "Financials";
+  if (s === "Gas Stations" || s === "Energy") return "Energy";
+  if (s === "Technology" || s === "Telecom" || s === "Subscriptions") return "Technology";
+  if (s === "Consumer & Retail" || s === "Travel" || s === "Restaurants" || s === "Media & Entertainment") return "Consumer Discretionary";
+  if (s === "Healthcare") return "Healthcare";
+  if (s === "Industrials" || s === "Transportation") return "Industrials";
+
+  return s === "Other / Unmapped" ? "Other" : s;
+}
+
+function buildSignal({ maxUserShare, users, deltaPct }) {
+  const concentration =
+    maxUserShare >= 0.08 ? "High spend concentration" : maxUserShare >= 0.04 ? "Moderate concentration" : "Broad-based";
+
+  const breadth = users >= 25 ? "High breadth" : users >= 12 ? "Medium breadth" : "Narrow breadth";
+
+  const d = Math.abs(Number(deltaPct || 0));
+  const stability = d <= 0.1 ? "Stable" : d <= 0.25 ? "Emerging" : "Spiky";
 
   return `${concentration} · ${breadth} · ${stability}`;
 }
 
-// Universe used only to make the mock feed look realistic.
-// In production you would generate this from anonymized aggregates + market data.
-const SECTORS = [
-  "Technology",
-  "Consumer & Retail",
-  "Healthcare",
-  "Financials",
-  "Energy",
-  "Industrials",
-  "Transportation",
-  "Restaurants",
-  "Media & Entertainment",
-  "Materials",
-  "Utilities",
-  "Real Estate"
-];
-
-const SECTOR_TICKERS = {
-  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO", "AMD", "ORCL", "CRM", "ADBE", "INTC", "TSM", "QCOM", "SNOW", "SHOP"],
-  "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW", "NKE", "SBUX", "MCD", "KO", "PEP", "PG", "UL", "ETSY", "EBAY"],
-  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS", "LLY", "BMY", "AMGN", "GILD", "ISRG", "ZTS"],
-  Financials: ["JPM", "BAC", "GS", "MS", "C", "WFC", "V", "MA", "AXP", "SCHW", "BLK"],
-  Energy: ["XOM", "CVX", "COP", "SLB", "PSX", "OXY", "EOG", "MPC", "VLO"],
-  Industrials: ["CAT", "GE", "HON", "DE", "MMM", "BA", "LMT", "RTX", "UPS", "FDX"],
-  Transportation: ["UBER", "LYFT", "DAL", "LUV", "UAL", "CSX", "NSC"],
-  Restaurants: ["MCD", "SBUX", "CMG", "YUM", "DPZ", "QSR", "WEN", "SHAK"],
-  "Media & Entertainment": ["NFLX", "DIS", "WBD", "SPOT", "PARA", "RBLX"],
-  Materials: ["LIN", "APD", "SHW", "DD", "ECL", "NEM"],
-  Utilities: ["NEE", "DUK", "SO", "AEP", "EXC"],
-  "Real Estate": ["PLD", "AMT", "EQIX", "O", "SPG"]
-};
-
-// Generate top sector weights that sum to ~1.0
-function generateTopSectors(asOf) {
-  // Deterministic base weights from hash, then normalize
-  const raw = SECTORS.slice(0, 8).map((sector) => {
-    const u = hashToUnit(`sectorWeight:${sector}:${asOf}`);
-    return { sector, w: 0.05 + u * 0.25 }; // 0.05..0.30
-  });
-
-  raw.sort((a, b) => b.w - a.w);
-
-  const top5 = raw.slice(0, 5);
-  const sum = top5.reduce((s, x) => s + x.w, 0);
-  return top5.map((x) => ({
-    sector: x.sector,
-    weight: x.w / sum
-  }));
+async function requireAuth(event) {
+  const authHeader = event.headers.authorization || event.headers.Authorization || "";
+  const m = String(authHeader).match(/^Bearer\s+(.+)$/i);
+  if (!m) throw new Error("Missing Authorization Bearer token");
+  const decoded = await admin.auth().verifyIdToken(m[1].trim());
+  if (!decoded?.uid) throw new Error("Invalid auth token");
+  return decoded.uid;
 }
 
-// Produce ~200 runner rows, biased toward community top sectors.
-function generateCommunityRunners(asOf, topSectors) {
-  const topSectorNames = (topSectors || []).map((x) => x.sector);
-  const pool = [];
-
-  // Weight selection: replicate tickers per sector proportional to sector weight
-  for (const s of topSectors) {
-    const tickers = SECTOR_TICKERS[s.sector] || [];
-    const copies = Math.round(40 * (s.weight || 0.2)); // approx distribution
-    for (let c = 0; c < copies; c++) {
-      for (const t of tickers) pool.push({ sector: s.sector, ticker: t });
-    }
-  }
-
-  // If pool too small (shouldn't happen), fallback to all sectors
-  if (pool.length < 50) {
-    for (const [sector, tickers] of Object.entries(SECTOR_TICKERS)) {
-      for (const t of tickers) pool.push({ sector, ticker: t });
-    }
-  }
-
-  // Build 200 items deterministically by walking a shuffled-like order
-  const runners = [];
-  const seen = new Set();
-
-  let i = 0;
-  while (runners.length < 200 && i < pool.length * 10) {
-    const pickIdx = Math.floor(hashToUnit(`pick:${asOf}:${i}`) * pool.length);
-    const pick = pool[pickIdx];
-    const key = `${pick.sector}:${pick.ticker}`;
-    i++;
-
-    // Allow some duplicates, but not too many; prefer variety
-    const dupCount = seen.has(key) ? 1 : 0;
-    if (dupCount && runners.length < 120) continue;
-
-    const r30 = mockReturn30d(pick.ticker, asOf);
-    const signal = mockSignal(pick.sector, pick.ticker, asOf);
-
-    runners.push({
-      sector: pick.sector,
-      ticker: pick.ticker,
-      return30d: r30,
-      signal
-    });
-
-    seen.add(key);
-  }
-
-  // Sort by 30D return desc and keep 200
-  runners.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
-  return runners.slice(0, 200);
+function jsonResponse(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    },
+    body: JSON.stringify(obj)
+  };
 }
 
-// netlify/functions/community-flow.js
+async function getFlowEligibleUsers() {
+  const snap = await db.collection("users").where("flowAccess", "==", true).limit(300).get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+async function getActiveBatchForWindow(uid, windowKey) {
+  const wref = db.collection("uploads").doc(uid).collection("windows").doc(windowKey);
+  const wsnap = await wref.get();
+  if (!wsnap.exists) return null;
+  const w = wsnap.data() || {};
+  if (!w.activeBatchId) return null;
+  return { batchId: String(w.activeBatchId), window: w };
+}
+
+async function getBatchMeta(uid, batchId) {
+  const bref = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+  const bsnap = await bref.get();
+  if (!bsnap.exists) return null;
+  return { id: bsnap.id, ...(bsnap.data() || {}) };
+}
+
+async function getTxIdsForBatch(uid, batchId, hardLimit = 5000) {
+  const txidsRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId).collection("txids");
+  const snap = await txidsRef.limit(hardLimit).get();
+  return snap.docs.map((d) => d.id);
+}
+
+async function getTxDocs(uid, txIds) {
+  const out = [];
+  const txCol = db.collection("uploads").doc(uid).collection("tx");
+
+  for (let i = 0; i < txIds.length; i += 450) {
+    const chunk = txIds.slice(i, i + 450);
+    const refs = chunk.map((id) => txCol.doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const s of snaps) {
+      if (s.exists) out.push({ id: s.id, ...(s.data() || {}) });
+    }
+  }
+  return out;
+}
+
+function pickKeyForTickerRow(tx) {
+  const t = tx?.ticker ? String(tx.ticker).toUpperCase().trim() : "";
+  if (t) return { key: `T:${t}`, ticker: t };
+
+  const m = tx?.merchantNorm ? String(tx.merchantNorm).toUpperCase().trim() : "";
+  if (m) return { key: `M:${m}`, ticker: null };
+
+  return { key: null, ticker: null };
+}
+
 exports.handler = async (event) => {
   try {
-    // MVP: mock data (replace later with Firestore aggregation)
-    const data = generateMockCommunityData();
+    // Auth once
+    const callerUid = await requireAuth(event);
+
+    // Gate: Flow access required
+    const caller = await db.collection("users").doc(callerUid).get();
+    const flowAccess = !!(caller.data() || {}).flowAccess;
+    if (!flowAccess) return jsonResponse(403, { error: "Flow access required" });
+
+    const q = event.queryStringParameters || {};
+    const days = Number(q.days || 30);
+    const mode = String(q.mode || "trailing");
+    const asOf = String(q.asOf || isoDate());
+
+    const win = computeWindow({ days, asOfISO: asOf, mode });
+
+    const users = await getFlowEligibleUsers();
+
+    const byKey = new Map();
+    const bySector = new Map();
+
+    for (const u of users) {
+      const uid = u.uid || u.id;
+      if (!uid) continue;
+
+      const active = await getActiveBatchForWindow(uid, win.windowKey);
+      if (!active?.batchId) continue;
+
+      const b = await getBatchMeta(uid, active.batchId);
+      if (!b) continue;
+
+      // REQUIRED: ignore deleted uploads
+      if (b.adminStatus === "deleted") continue;
+
+      const txIds = await getTxIdsForBatch(uid, active.batchId, 5000);
+      if (!txIds.length) continue;
+
+      const txDocs = await getTxDocs(uid, txIds);
+
+      for (const tx of txDocs) {
+        const d = String(tx.postedDate || "");
+        if (!d || d < win.startISO || d > win.endISO) continue;
+
+        const amt = Number(tx.amount ?? 0);
+        if (!Number.isFinite(amt)) continue;
+
+        const spend = Math.abs(amt);
+        if (!spend) continue;
+
+        const spendSector = String(tx.sector || "Other / Unmapped");
+        const sector = rollupSector(spendSector);
+
+        const pk = pickKeyForTickerRow(tx);
+        if (!pk.key) continue;
+
+        bySector.set(sector, (bySector.get(sector) || 0) + spend);
+
+        if (!byKey.has(pk.key)) {
+          byKey.set(pk.key, {
+            key: pk.key,
+            ticker: pk.ticker,
+            sector,
+            spend: 0,
+            usersSet: new Set(),
+            events: 0,
+            userSpend: new Map()
+          });
+        }
+
+        const row = byKey.get(pk.key);
+        row.spend += spend;
+        row.events += 1;
+        row.usersSet.add(uid);
+        row.userSpend.set(uid, (row.userSpend.get(uid) || 0) + spend);
+      }
+    }
+
+    const rows = [];
+    for (const r of byKey.values()) {
+      const usersCount = r.usersSet.size || 0;
+
+      let maxUserSpend = 0;
+      for (const v of r.userSpend.values()) maxUserSpend = Math.max(maxUserSpend, v);
+
+      const maxUserShare = r.spend > 0 ? maxUserSpend / r.spend : 0;
+      const top3Share = 0;
+      const deltaPct = 0;
+
+      const signal = buildSignal({ maxUserShare, users: usersCount, deltaPct });
+
+      rows.push({
+        ticker: r.ticker || null,
+        sector: r.sector,
+        signal,
+        count: r.events,
+        date: win.endISO,
+
+        // extra fields (safe to add; UI can ignore)
+        spend: r.spend,
+
+        users: usersCount,
+        events: r.events,
+        maxUserShare,
+        top3Share,
+        deltaPct,
+        eligibility: {
+          passed: usersCount >= 3 && r.events >= 10,
+          reasons: [
+            ...(usersCount >= 3 ? [] : ["LOW_USERS"]),
+            ...(r.events >= 10 ? [] : ["LOW_EVENTS"])
+          ]
+        }
+      });
+    }
+
+    const topSectors = Array.from(bySector.entries())
+      .map(([sector, spend]) => ({ sector, spend }))
+      .sort((a, b) => b.spend - a.spend)
+      .slice(0, 5);
+
+    const eligible = rows
+      .filter((x) => x.ticker && x.eligibility?.passed)
+      .map((x) => ({
+        ...x,
+        return30d: mockReturn30d(String(x.ticker), win.endISO)
+      }));
+
+    const sectorOrder = topSectors.map((x) => x.sector);
+    const bySectorElig = new Map();
+    for (const s of sectorOrder) bySectorElig.set(s, []);
+
+    for (const r of eligible) {
+      const s = r.sector || "Other";
+      if (!bySectorElig.has(s)) bySectorElig.set(s, []);
+      bySectorElig.get(s).push(r);
+    }
+
+    // Within sector: spend desc, then events/users as tie-breakers
+    for (const [s, arr] of bySectorElig.entries()) {
+      arr.sort(
+        (a, b) =>
+          (b.spend || 0) - (a.spend || 0) ||
+          (b.events || 0) - (a.events || 0) ||
+          (b.users || 0) - (a.users || 0)
+      );
+      bySectorElig.set(s, arr);
+    }
+
+    // Seed: 2 per top sector
+    const topRunners = [];
+    const seenTickers = new Set();
+
+    for (const s of sectorOrder) {
+      const arr = bySectorElig.get(s) || [];
+      let picked = 0;
+
+      for (const r of arr) {
+        if (picked >= 2) break;
+        if (seenTickers.has(r.ticker)) continue;
+        topRunners.push(r);
+        seenTickers.add(r.ticker);
+        picked += 1;
+      }
+    }
+
+    // Fill: best remaining across all sectors
+    const remaining = eligible
+      .filter((r) => !seenTickers.has(r.ticker))
+      .sort(
+        (a, b) =>
+          (b.spend || 0) - (a.spend || 0) ||
+          (b.events || 0) - (a.events || 0) ||
+          (b.users || 0) - (a.users || 0)
+      );
+
+    for (const r of remaining) {
+      if (topRunners.length >= 10) break;
+      if (seenTickers.has(r.ticker)) continue;
+      topRunners.push(r);
+      seenTickers.add(r.ticker);
+    }
 
     return {
       statusCode: 200,
@@ -168,24 +361,10 @@ exports.handler = async (event) => {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store"
       },
-      body: JSON.stringify(data) // IMPORTANT: return ARRAY, not {ok:true,data}
+      body: JSON.stringify(topRunners)
     };
   } catch (e) {
-    return {
-      statusCode: 500,
-      headers: { "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ error: "Failed to generate community feed." })
-    };
+    console.error("community-flow error:", e);
+    return jsonResponse(500, { error: String(e?.message || e) });
   }
 };
-
-// ---- mock generator ----
-function generateMockCommunityData() {
-  return [
-    { ticker: "AAPL", sector: "Technology", signal: "High spend concentration · Medium breadth · Stable", count: 41, date: new Date().toISOString().slice(0,10),
-      users: 40, events: 420, maxUserShare: 0.06, top3Share: 0.18, deltaPct: 0.22, eligibility: { passed: true, reasons: [] } },
-    { ticker: "MSFT", sector: "Technology", signal: "Broad-based · High breadth · Stable", count: 37, date: new Date().toISOString().slice(0,10),
-      users: 52, events: 510, maxUserShare: 0.05, top3Share: 0.16, deltaPct: 0.12, eligibility: { passed: true, reasons: [] } }
-  ];
-}
-

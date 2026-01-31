@@ -2,36 +2,34 @@
 import { useEffect, useState } from "react";
 
 // Single source of truth for sizing + spacing.
-// ✅ Updated to “Sphere x Schwab” palette while keeping structure stable.
+// Keep this aligned with MonthlyDrip's "feel".
 export const UI = {
   // Typography
   FONT_HEADER: 16,
   FONT_BODY: 14,
   FONT_MUTED: 13,
 
-  // ✅ Schwab-style colors (pulled from CSS variables with safe fallbacks)
-  PRIMARY: "var(--s-primary, #123764)",
-  SECONDARY: "var(--s-secondary, #3f6fa5)",
-  ACCENT: "var(--s-accent, #5fb3d9)",
-  TEXT: "var(--s-text, #1f2b3a)",
+  // ✅ Sphere x Schwab palette tokens
+  PRIMARY: "#123764",   // Deep Financial Blue
+  SECONDARY: "#3F6FA5", // Steel Blue
+  ACCENT: "#5FB3D9",    // Aqua Blue
+  ICE: "#EAF2F8",       // Ice Blue
+  TEXT: "#1F2B3A",      // Charcoal Navy
+  DIVIDER: "#D6DEE6",   // Soft Gray
 
-  // Surfaces / dividers
-  PAGE_BG: "var(--s-white, #ffffff)",
-  BAND_BG: "var(--s-ice, #eaf2f8)",           // Section background rhythm
-  BAND_BORDER: "var(--s-divider, #d6dee6)",   // Soft gray separators
-  SOFT_BORDER: "var(--s-divider, #d6dee6)",
+  // Existing surfaces (keep your current feel)
+  BAND_BG: "#f6f6f6",
+  BAND_BORDER: "#e6e6e6",
+  SOFT_BORDER: "#eee",
 
-  // Radii
+  // Shape + spacing
   RADIUS: 10,
   RADIUS_SOFT: 8,
 
-  // Spacing
   PAD_BAND: "0.85rem 1rem",
   PAD_SUMMARY: "0.6rem 0.75rem",
-  GAP: 12,
 
-  // Shadow (subtle, Schwab-style)
-  SHADOW: "0 8px 24px rgba(18, 55, 100, 0.08)"
+  GAP: 12
 };
 
 export function usePersistedBool(key, defaultValue) {

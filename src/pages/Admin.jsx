@@ -11,7 +11,7 @@ import {
   serverTimestamp,
   setDoc
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 
 function formatWhen(ts) {
   let d = null;
@@ -55,14 +55,23 @@ function Card({ title, children }) {
   );
 }
 
+async function getAdminTokenOrThrow() {
+  const u = auth?.currentUser;
+  if (!u?.getIdToken) throw new Error("Not signed in.");
+  const token = await u.getIdToken();
+  if (!token) throw new Error("Not signed in.");
+  return token;
+}
+
 export default function Admin() {
-  const [tab, setTab] = useState("waitlist"); // waitlist | users | pending
+  const [tab, setTab] = useState("waitlist"); // waitlist | users | pending | uploads
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const [waitlist, setWaitlist] = useState([]);
   const [users, setUsers] = useState([]);
   const [pending, setPending] = useState([]);
+  const [uploads, setUploads] = useState([]);
 
   async function loadWaitlist() {
     const q = query(collection(db, "waitlist"), orderBy("createdAt", "desc"), limit(50));
@@ -70,12 +79,9 @@ export default function Admin() {
     setWaitlist(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
   }
 
-  // ✅ Safe users load even if lastLoginAt is mixed types
   async function loadUsers() {
-    // Grab a bounded set, then sort client-side safely.
     const q = query(collection(db, "users"), limit(200));
     const snap = await getDocs(q);
-
     const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     rows.sort((a, b) => {
@@ -93,6 +99,17 @@ export default function Admin() {
     setPending(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
   }
 
+  // Upload batch list via admin function (avoids collectionGroup/index headaches)
+  async function loadUploads() {
+    const token = await getAdminTokenOrThrow();
+    const res = await fetch("/.netlify/functions/admin-list-uploads?limit=50", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j?.error || "Failed to load uploads");
+    setUploads(Array.isArray(j?.rows) ? j.rows : []);
+  }
+
   async function refresh() {
     setBusy(true);
     setErr("");
@@ -100,6 +117,7 @@ export default function Admin() {
       if (tab === "waitlist") await loadWaitlist();
       if (tab === "users") await loadUsers();
       if (tab === "pending") await loadPending();
+      if (tab === "uploads") await loadUploads();
     } catch (e) {
       console.error("Admin refresh error:", e);
       setErr(e?.message || "Failed to load admin data.");
@@ -155,7 +173,6 @@ export default function Admin() {
     setBusy(true);
     setErr("");
     try {
-      // publish
       await setDoc(doc(db, "posts", p.id), {
         title: String(p.title || "").trim(),
         body: String(p.body || "").trim(),
@@ -166,9 +183,7 @@ export default function Admin() {
         status: "published"
       });
 
-      // remove pending
       await deleteDoc(doc(db, "posts_pending", p.id));
-
       await loadPending();
     } catch (e) {
       console.error("approvePost error:", e);
@@ -192,11 +207,38 @@ export default function Admin() {
     }
   }
 
+  // Soft-delete upload batch (adminStatus = deleted)
+  async function removeUpload({ uid, batchId }) {
+    const reason = prompt("Why remove this upload? (optional)") || "Admin removed";
+    setBusy(true);
+    setErr("");
+    try {
+      const token = await getAdminTokenOrThrow();
+      const res = await fetch("/.netlify/functions/admin-delete-upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ uid, batchId, reason })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Could not remove upload.");
+      await loadUploads();
+    } catch (e) {
+      console.error("removeUpload error:", e);
+      setErr(e?.message || "Could not remove upload.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const header = useMemo(() => {
     const map = {
       waitlist: "Waitlist (latest 50)",
       users: "Users (latest 50)",
-      pending: "Posts Pending (latest 50)"
+      pending: "Posts Pending (latest 50)",
+      uploads: "Uploads (latest 50)"
     };
     return map[tab];
   }, [tab]);
@@ -207,6 +249,7 @@ export default function Admin() {
         {navBtn("waitlist", "Waitlist")}
         {navBtn("users", "Users")}
         {navBtn("pending", "Posts Pending")}
+        {navBtn("uploads", "Uploads")}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
           <button
@@ -360,9 +403,7 @@ export default function Admin() {
                   <div style={{ opacity: 0.85, marginTop: 4 }}>
                     tag: <b>{p.tag || "Post"}</b> · {formatWhen(p.createdAt)} · {p.authorEmail || "—"}
                   </div>
-                  <div style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
-                    {String(p.body || "").trim()}
-                  </div>
+                  <div style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>{String(p.body || "").trim()}</div>
 
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                     <button
@@ -400,6 +441,112 @@ export default function Admin() {
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        )}
+
+        {tab === "uploads" && (
+          <div style={{ display: "grid", gap: 10 }}>
+            {uploads.length === 0 ? (
+              <div style={{ opacity: 0.85 }}>No uploads found.</div>
+            ) : (
+              uploads.map((u) => {
+                const unmappedCount = u?.rollups?.unmappedCount || 0;
+                const unmappedTop = u?.rollups?.unmappedTop || {};
+                return (
+                  <div
+                    key={`${u.uid}:${u.batchId}`}
+                    style={{
+                      padding: 12,
+                      borderRadius: 10,
+                      border: "1px solid var(--s-divider, #d6dee6)",
+                      background: "white"
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        justifyContent: "space-between"
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 900 }}>
+                          {u.filename || "(no filename)"}
+                          {unmappedCount ? (
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                background: "#fef3c7",
+                                border: "1px solid #f59e0b",
+                                fontSize: 12,
+                                fontWeight: 900
+                              }}
+                            >
+                              unmapped: {unmappedCount}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div style={{ opacity: 0.85, marginTop: 4, fontFamily: "monospace", fontSize: 12 }}>
+                          uid: {u.uid} · batch: {u.batchId}
+                        </div>
+
+                        <div style={{ opacity: 0.85, marginTop: 4 }}>
+                          decision: <b>{u.decision}</b> · activated: <b>{String(u.activated)}</b> · flagged:{" "}
+                          <b>{String(!!u.flagged)}</b>
+                          {u.adminStatus ? (
+                            <>
+                              {" · "}adminStatus: <b>{u.adminStatus}</b>
+                            </>
+                          ) : null}
+                        </div>
+
+                        <div style={{ opacity: 0.85, marginTop: 4 }}>
+                          rows: <b>{u?.stats?.totalRows ?? "—"}</b> · uniqueTx: <b>{u?.stats?.uniqueTxCount ?? "—"}</b> ·
+                          coverageDays: <b>{u?.stats?.coverageDays ?? "—"}</b>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => removeUpload({ uid: u.uid, batchId: u.batchId })}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid #fecaca",
+                          background: "#fef2f2",
+                          color: "#991b1b",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        Remove upload
+                      </button>
+                    </div>
+
+                    {unmappedCount ? (
+                      <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "var(--s-ice, #eaf2f8)" }}>
+                        <div style={{ fontWeight: 900 }}>Unmapped merchants (top)</div>
+                        <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                          {Object.entries(unmappedTop)
+                            .slice(0, 25)
+                            .map(([m, c]) => `${m}  (${c})`)
+                            .join("\n")}
+                        </div>
+                        <div style={{ marginTop: 8, opacity: 0.85, fontSize: 12 }}>
+                          Fix by adding mapping rules to your merchant map; once mapped, this badge disappears.
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
             )}
           </div>
         )}

@@ -5,6 +5,7 @@ import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
   isSignInWithEmailLink,
+  onAuthStateChanged,
   sendSignInLinkToEmail,
   signInWithEmailAndPassword,
   signInWithEmailLink,
@@ -81,8 +82,7 @@ export default function Login() {
     display: "grid",
     placeItems: "center",
     padding: 24,
-    background:
-      "linear-gradient(180deg, var(--s-ice, #EAF2F8) 0%, var(--s-white, #FFFFFF) 100%)"
+    background: "linear-gradient(180deg, var(--s-ice, #EAF2F8) 0%, var(--s-white, #FFFFFF) 100%)"
   };
 
   const cardStyle = {
@@ -154,6 +154,20 @@ export default function Login() {
     };
   };
 
+  // ---------- Auth state: if signed in, leave this page ----------
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      console.log("AUTH STATE (Login.jsx):", u?.uid || null, u?.email || null);
+
+      if (u?.uid) {
+        // Redirect away from login so it doesn't look like "nothing happened"
+        window.location.assign("/");
+      }
+    });
+
+    return () => unsub();
+  }, []);
+
   // ---------- Email Link: complete sign-in if user opened link ----------
   useEffect(() => {
     const href = window.location.href;
@@ -195,7 +209,7 @@ export default function Login() {
         } catch {}
 
         setStatus({ type: "ok", msg: "Signed in successfully." });
-        // App.jsx onAuthStateChanged will route you into Home automatically
+        // Redirect handled by onAuthStateChanged
       } catch (e) {
         console.error("Email link sign-in error:", e);
         const msg = String(e?.message || e || "");
@@ -222,6 +236,7 @@ export default function Login() {
     try {
       await signInWithEmailAndPassword(auth, normalizeEmail(email), password);
       setStatus({ type: "ok", msg: "Signed in." });
+      // Redirect handled by onAuthStateChanged
     } catch (e) {
       console.error("pwLogin error:", e);
       const msg = String(e?.message || "");
@@ -246,6 +261,7 @@ export default function Login() {
     try {
       await createUserWithEmailAndPassword(auth, normalizeEmail(email), password);
       setStatus({ type: "ok", msg: "Account created. You’re signed in." });
+      // Redirect handled by onAuthStateChanged
     } catch (e) {
       console.error("pwSignup error:", e);
       const msg = String(e?.message || "");
@@ -307,6 +323,7 @@ export default function Login() {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
       setStatus({ type: "ok", msg: "Signed in with Google." });
+      // Redirect handled by onAuthStateChanged
     } catch (e) {
       console.error("Google sign-in error:", e);
       setStatus({
@@ -461,11 +478,7 @@ export default function Login() {
               onClick={pwAction === "signup" ? pwSignup : pwLogin}
               style={primaryBtnStyle(canEmail && canPassword && !busy)}
             >
-              {busy
-                ? "Working…"
-                : pwAction === "signup"
-                ? "Create account →"
-                : "Log in →"}
+              {busy ? "Working…" : pwAction === "signup" ? "Create account →" : "Log in →"}
             </button>
 
             <div style={smallNote}>

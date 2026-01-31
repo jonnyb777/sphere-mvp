@@ -19,7 +19,7 @@ This MVP demonstrates behavior-based investing insights without executing trades
 
 ## Monthly Flow (Paid Preview)
 - Powered by admin-controlled, anonymized aggregate data.
-- Loaded from /.netlify/functions/community.
+- Loaded from /.netlify/functions/community-flow.
 - Displays:
   - Highest concentration sector (narrative)
   - Top sectors by spend weight

@@ -74,8 +74,9 @@ export function Hint({ children }) {
   return <div style={styles.hint}>{children}</div>;
 }
 
-export function Pill({ children }) {
-  return <span style={styles.pill}>{children}</span>;
+// ✅ Upgrade: allow style overrides (non-breaking)
+export function Pill({ children, style }) {
+  return <span style={{ ...styles.pill, ...(style || {}) }}>{children}</span>;
 }
 
 const styles = {

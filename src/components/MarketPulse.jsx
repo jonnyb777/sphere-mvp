@@ -3,11 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import TimeframeControls from "./TimeframeControls";
 import { Card } from "./ui/UiKit";
 import { UI } from "./SectionUI";
-import { pickTop10WithTwoPerSector } from "../utils/pickTop10WithTwoPerSector";
+import { rollUpSector } from "../utils/sectorRollup";
 
 function pct(n) {
-  if (n === null || n === undefined) return "—";
-  return `${(n * 100).toFixed(2)}%`;
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return "—";
+  return `${(Number(n) * 100).toFixed(2)}%`;
 }
 
 function uniq(arr) {
@@ -29,37 +29,144 @@ function windowLabel({ timeframeDays, asOfDate, timeMode }) {
   return `${timeframeDays}d · ${mode} · as-of ${asOf}`;
 }
 
-function buildPulseNarrative({ spendSectors, tickerLeaders, timeframeDays, asOfDate, timeMode }) {
-  const sectors = (spendSectors || []).filter(Boolean);
-  const leaders = Array.isArray(tickerLeaders) ? tickerLeaders : [];
+function formatSpendSectorsWithRollup(rawSectors = []) {
+  return (rawSectors || [])
+    .filter(Boolean)
+    .map((s) => {
+      const r = rollUpSector(s);
+      return r && r !== s ? `${s} (${r})` : s;
+    })
+    .join(", ");
+}
 
-  if (!sectors.length) {
-    return `Upload transactions to generate your top spend sectors. Once we have them, we’ll show sector leaders + runners for ${windowLabel({
+/**
+ * Diversity runner selection:
+ * - pick 1 then 2 from each top sector (if possible),
+ * - then fill remaining by performance, ignoring caps.
+ */
+function pickTop10DiversifiedByUserSectors({
+  items,
+  topSectors,
+  getSector,
+  getTicker,
+  maxTotal = 10,
+  maxPerTopSector = 2
+}) {
+  const arr = Array.isArray(items) ? items : [];
+  const sectors = (Array.isArray(topSectors) ? topSectors : [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+
+  const picked = [];
+  const pickedTickers = new Set();
+  const countBySector = new Map();
+
+  const bySector = new Map();
+  for (const x of arr) {
+    const t = String(getTicker(x) || "").toUpperCase().trim();
+    if (!t) continue;
+    const s = String(getSector(x) || "Other / Unmapped");
+    if (!bySector.has(s)) bySector.set(s, []);
+    bySector.get(s).push(x);
+  }
+
+  for (const [s, list] of bySector.entries()) {
+    list.sort((a, b) => {
+      const ra = Number(a.return30d ?? -999);
+      const rb = Number(b.return30d ?? -999);
+      return rb - ra;
+    });
+  }
+
+  const canAddStrict = (x) => {
+    const t = String(getTicker(x) || "").toUpperCase().trim();
+    if (!t || pickedTickers.has(t)) return false;
+
+    const s = String(getSector(x) || "Other / Unmapped");
+    if (sectors.includes(s)) {
+      const n = countBySector.get(s) || 0;
+      if (n >= maxPerTopSector) return false;
+    }
+    return true;
+  };
+
+  const canAddLoose = (x) => {
+    const t = String(getTicker(x) || "").toUpperCase().trim();
+    if (!t || pickedTickers.has(t)) return false;
+    return true;
+  };
+
+  const add = (x) => {
+    const t = String(getTicker(x) || "").toUpperCase().trim();
+    const s = String(getSector(x) || "Other / Unmapped");
+    picked.push(x);
+    pickedTickers.add(t);
+    countBySector.set(s, (countBySector.get(s) || 0) + 1);
+  };
+
+  for (const s of sectors) {
+    if (picked.length >= maxTotal) break;
+    const list = bySector.get(s) || [];
+    const first = list.find((x) => canAddStrict(x));
+    if (first) add(first);
+  }
+
+  for (const s of sectors) {
+    if (picked.length >= maxTotal) break;
+    const list = bySector.get(s) || [];
+    const next = list.find((x) => canAddStrict(x));
+    if (next) add(next);
+  }
+
+  for (const x of arr) {
+    if (picked.length >= maxTotal) break;
+    if (canAddLoose(x)) add(x);
+  }
+
+  return picked.slice(0, maxTotal);
+}
+
+function buildPulseNarrative({
+  spendSectorsRaw,
+  spendSectorsRolled,
+  sectorLeaders,
+  tickerLeaders,
+  timeframeDays,
+  asOfDate,
+  timeMode
+}) {
+  const raw = (spendSectorsRaw || []).filter(Boolean);
+  const rolled = (spendSectorsRolled || []).filter(Boolean);
+  const leaders = Array.isArray(sectorLeaders) ? sectorLeaders : [];
+  const runners = Array.isArray(tickerLeaders) ? tickerLeaders : [];
+
+  if (!raw.length) {
+    return `Upload transactions to generate your top spend categories. Once we have them, we’ll compute Market Pulse for ${windowLabel({
       timeframeDays,
       asOfDate,
       timeMode
     })}.`;
   }
 
-  if (!leaders.length) {
-    return `We found your top spend sectors (${sectors.join(
-      ", "
-    )}), but we don’t have runner data yet for ${windowLabel({ timeframeDays, asOfDate, timeMode })}.`;
-  }
+  const rawLine = formatSpendSectorsWithRollup(raw);
+  const rolledLine = uniq(rolled).join(", ");
 
   const leaderSectors = Array.from(new Set(leaders.map((x) => x.sectorName).filter(Boolean)));
-  const covered = leaderSectors.slice(0, 5);
-  const extraCount = Math.max(0, leaderSectors.length - covered.length);
+  const coveredLeaders = leaderSectors.slice(0, 5);
 
-  return `This Market Pulse is computed on ${windowLabel({
+  const runnerSectors = Array.from(new Set(runners.map((x) => x.sectorName).filter(Boolean)));
+  const coveredRunners = runnerSectors.slice(0, 5);
+  const runnerExtra = Math.max(0, runnerSectors.length - coveredRunners.length);
+
+  return `Market Pulse for ${windowLabel({
     timeframeDays,
     asOfDate,
     timeMode
-  })}. We start from your top spend sectors (${sectors.join(
-    ", "
-  )}) and then select up to 10 “runners” by performance from the tickers mapped to those sectors. Where possible, we prioritize representation across your top sectors (up to 2 per sector), then fill remaining slots with the strongest performers. ${
-    covered.length
-      ? `Current runners span: ${covered.join(", ")}${extraCount ? ` (+${extraCount} more)` : ""}.`
+  })}. Your activity drives the runner list: we start from your top spend categories (${rawLine}), roll them up into market buckets (${rolledLine}), then select up to 10 runners by performance from tickers mapped to those buckets (diversified across your buckets when possible). Market “Sector Leaders” above are ETF proxies for context and may differ from your spend. ${
+    coveredLeaders.length ? `Market sector leaders include: ${coveredLeaders.join(", ")}.` : ""
+  } ${
+    coveredRunners.length
+      ? `Your runners span: ${coveredRunners.join(", ")}${runnerExtra ? ` (+${runnerExtra} more)` : ""}.`
       : ""
   }`;
 }
@@ -75,9 +182,7 @@ async function fetchJsonNetlifyFunction(pathWithQuery) {
     window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1";
   const port = String(window?.location?.port || "");
 
-  const tryUrls = [];
-  tryUrls.push(pathWithQuery);
-
+  const tryUrls = [pathWithQuery];
   if (isLocalhost && port !== "8888") {
     tryUrls.push(`http://localhost:8888${pathWithQuery}`);
   }
@@ -94,9 +199,7 @@ async function fetchJsonNetlifyFunction(pathWithQuery) {
         throw new Error(`HTTP ${res.status} for ${url}\nFirst chars: ${text.slice(0, 120)}`);
       }
 
-      const looksHtml =
-        ct.includes("text/html") || text.trim().toLowerCase().startsWith("<!doctype html");
-
+      const looksHtml = ct.includes("text/html") || text.trim().toLowerCase().startsWith("<!doctype html");
       if (looksHtml) {
         throw new Error(
           `Non-JSON response for ${url}\nContent-Type: ${ct || "unknown"}\nFirst chars: ${text.slice(0, 120)}`
@@ -113,7 +216,7 @@ async function fetchJsonNetlifyFunction(pathWithQuery) {
 }
 
 /**
- * Sector ETFs for "Top 5 Sector Leaders"
+ * Sector ETFs for "Top 5 Sector Leaders" (Market context)
  */
 const sectorEtfs = [
   { ticker: "XLC", name: "Communication Services" },
@@ -130,31 +233,49 @@ const sectorEtfs = [
 ];
 
 const sectorUniverse = {
+  "Consumer Discretionary": ["AMZN", "TGT", "HD", "LOW", "MCD", "SBUX", "CMG", "YUM", "DPZ", "BKNG", "EXPE", "ABNB", "MAR", "HLT"],
+  "Consumer Staples": ["WMT", "COST", "KR", "ACI", "PG", "KO", "PEP", "CL", "KMB"],
+  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS", "WBA"],
+  Industrials: ["CAT", "GE", "HON", "DE", "MMM", "FDX", "UPS", "DAL", "LUV", "UAL"],
+  Energy: ["XOM", "CVX", "COP", "SLB", "PSX", "MPC", "VLO"],
+  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO", "CRM", "ADBE", "ORCL"],
+  "Communication Services": ["NFLX", "DIS", "WBD", "SPOT", "T", "VZ", "TMUS"],
+  Financials: ["JPM", "BAC", "GS", "MS", "C", "PGR", "ALL", "TRV", "CB"],
+  Utilities: ["NEE", "DUK", "SO", "EXC", "AEP"],
+  Materials: ["LIN", "APD", "SHW", "ECL"],
+  "Real Estate": ["AMT", "PLD", "EQIX"],
+
   "Consumer & Retail": ["AMZN", "TGT", "WMT", "COST", "HD", "LOW"],
-  Healthcare: ["UNH", "JNJ", "MRK", "PFE", "ABBV", "CVS"],
   Restaurants: ["MCD", "SBUX", "CMG", "YUM", "DPZ"],
   Transportation: ["UBER", "FDX", "UPS", "DAL", "LUV"],
-  Energy: ["XOM", "CVX", "COP", "SLB", "PSX"],
-  Technology: ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AVGO"],
   "Media & Entertainment": ["NFLX", "DIS", "WBD", "SPOT"],
-  Financials: ["JPM", "BAC", "GS", "MS", "C"],
-  Industrials: ["CAT", "GE", "HON", "DE", "MMM"]
+
+  Grocery: ["KR", "ACI", "SFM", "WMT", "COST"],
+  "Big Box Retail": ["WMT", "COST", "TGT", "BJ"],
+  Pharmacies: ["CVS", "WBA"],
+  "Gas Stations": ["XOM", "CVX", "MPC", "PSX", "VLO"],
+  Insurance: ["PGR", "ALL", "TRV", "CB", "MET"],
+  Telecom: ["T", "VZ", "TMUS"],
+  Subscriptions: ["NFLX", "SPOT", "DIS", "MSFT", "ADBE", "CRM"],
+  Travel: ["BKNG", "EXPE", "ABNB", "MAR", "HLT", "DAL", "UAL", "LUV", "RCL", "CCL"],
+  Airlines: ["DAL", "UAL", "AAL", "LUV"],
+  "Hotels & Lodging": ["MAR", "HLT", "H"],
+  "Online Travel": ["BKNG", "EXPE", "ABNB"],
+  "Cruises & Leisure": ["RCL", "CCL", "NCLH"]
 };
 
 export default function MarketPulse({
   topSpendSectors,
-  transactions, // kept in signature for stability
+  transactions,
   onAddTicker,
   onAvailableTickers,
   onPersonalRunnersChange,
   onSectorLeadersChange,
 
-  // values
   timeframeDays = 30,
   asOfDate,
   timeMode = "trailing",
 
-  // setters (optional; when provided, we render the nice in-panel controls)
   setTimeframeDays,
   setAsOfDate,
   setTimeMode
@@ -165,26 +286,45 @@ export default function MarketPulse({
   const [dataSourceNote, setDataSourceNote] = useState("");
   const [fatalError, setFatalError] = useState("");
 
-  const spendSectors = useMemo(
+  // NEW: non-fatal missing ticker note
+  const [missingNote, setMissingNote] = useState("");
+
+  const spendSectorsRaw = useMemo(
     () => (topSpendSectors || []).filter(Boolean).slice(0, 5),
     [topSpendSectors]
   );
 
-  const tickerToSector = useMemo(() => {
+  const spendSectorsRolled = useMemo(() => {
+    const rolled = spendSectorsRaw.map((s) => rollUpSector(s)).filter(Boolean);
+    const cleaned = rolled.filter((s) => s !== "Other / Unmapped");
+    return uniq(cleaned.length ? cleaned : rolled);
+  }, [spendSectorsRaw]);
+
+  const tickerToRolledSector = useMemo(() => {
     const map = {};
-    for (const [sectorName, tickers] of Object.entries(sectorUniverse)) {
-      for (const t of tickers) map[t] = sectorName;
+    for (const [key, tickers] of Object.entries(sectorUniverse)) {
+      const rolledKey = rollUpSector(key);
+      for (const t of tickers) map[String(t).toUpperCase()] = rolledKey;
     }
     return map;
   }, []);
 
   const tickersForSpendSectors = useMemo(() => {
     const tickers = [];
-    for (const sector of spendSectors) {
+
+    for (const sector of spendSectorsRolled) {
       tickers.push(...(sectorUniverse[sector] || []));
     }
-    return uniq(tickers);
-  }, [spendSectors]);
+
+    if (!tickers.length) {
+      for (const raw of spendSectorsRaw) {
+        tickers.push(...(sectorUniverse[raw] || []));
+      }
+    }
+
+    // IMPORTANT: cap to keep requests safe; degrade gracefully with partial results
+    return uniq(tickers.map((t) => String(t).toUpperCase())).slice(0, 60);
+  }, [spendSectorsRolled, spendSectorsRaw]);
 
   useEffect(() => {
     if (typeof onAvailableTickers === "function") {
@@ -202,8 +342,10 @@ export default function MarketPulse({
     const run = async () => {
       setLoading(true);
       setFatalError("");
+      setMissingNote("");
 
       try {
+        // --- Sector leader ETFs (market context) ---
         const etfTickers = sectorEtfs.map((s) => s.ticker).join(",");
 
         const qs = new URLSearchParams({
@@ -215,7 +357,11 @@ export default function MarketPulse({
 
         const etfJson = await fetchJsonNetlifyFunction(`/.netlify/functions/market?${qs.toString()}`);
 
-        const etfItems = Array.isArray(etfJson.items) ? etfJson.items : [];
+        const etfItemsRaw = Array.isArray(etfJson.items) ? etfJson.items : [];
+        const etfMissing = Array.isArray(etfJson.missing) ? etfJson.missing : [];
+
+        // only keep valid numeric returns
+        const etfItems = etfItemsRaw.filter((x) => typeof x.return30d === "number" && Number.isFinite(x.return30d));
         etfItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
         const leaders = etfItems.slice(0, 5).map((x) => ({
@@ -226,6 +372,7 @@ export default function MarketPulse({
         setSectorLeaders(leaders);
         if (typeof onSectorLeadersChange === "function") onSectorLeadersChange(leaders);
 
+        // --- Activity-led runners based on YOUR spend sectors ---
         if (tickersForSpendSectors.length) {
           const uniQs = new URLSearchParams({
             tickers: tickersForSpendSectors.join(","),
@@ -236,39 +383,72 @@ export default function MarketPulse({
 
           const uniJson = await fetchJsonNetlifyFunction(`/.netlify/functions/market?${uniQs.toString()}`);
 
-          const uniItems = Array.isArray(uniJson.items) ? uniJson.items : [];
+          const uniItemsRaw = Array.isArray(uniJson.items) ? uniJson.items : [];
+          const uniMissing = Array.isArray(uniJson.missing) ? uniJson.missing : [];
+
+          const uniItems = uniItemsRaw.filter((x) => typeof x.return30d === "number" && Number.isFinite(x.return30d));
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
           const labeledSorted = uniItems.map((x) => ({
             ...x,
-            sectorName: tickerToSector[x.ticker] || "Other / Unmapped"
+            sectorName: tickerToRolledSector[String(x.ticker || "").toUpperCase()] || "Other / Unmapped"
           }));
 
-          const top10 = pickTop10WithTwoPerSector({
+          const top10 = pickTop10DiversifiedByUserSectors({
             items: labeledSorted,
-            topSectors: spendSectors,
+            topSectors: spendSectorsRolled.length ? spendSectorsRolled : spendSectorsRaw.map((s) => rollUpSector(s)),
             getSector: (x) => x.sectorName,
             getTicker: (x) => x.ticker,
             maxTotal: 10,
             maxPerTopSector: 2
           });
 
-          setTickerLeaders(top10);
+          const alphaTop10 = top10.slice().sort((a, b) => {
+            const s = String(a.sectorName || "").localeCompare(String(b.sectorName || ""), undefined, {
+              sensitivity: "base"
+            });
+            if (s !== 0) return s;
+            return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
+          });
+
+          setTickerLeaders(alphaTop10);
 
           if (typeof onPersonalRunnersChange === "function") {
-            onPersonalRunnersChange(top10.map((x) => x.ticker).filter(Boolean));
+            onPersonalRunnersChange(alphaTop10.map((x) => x.ticker).filter(Boolean));
+          }
+
+          // Non-fatal note: missing cache tickers
+          const missingCombined = uniq([...(etfMissing || []), ...(uniMissing || [])]).filter(Boolean);
+          if (missingCombined.length) {
+            setMissingNote(
+              `Some tickers are missing cached market data (${missingCombined.length}). Showing partial results.`
+            );
           }
         } else {
           setTickerLeaders([]);
           if (typeof onPersonalRunnersChange === "function") onPersonalRunnersChange([]);
+
+          if (etfMissing.length) {
+            setMissingNote(`Some sector ETF tickers are missing cached market data (${etfMissing.length}).`);
+          }
         }
 
         setDataSourceNote(
-          "Returns are computed from free daily close data via a Netlify Function. Informational only; not a recommendation."
+          "Market data is computed from daily close data and served from cache. Informational only; not a recommendation."
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
-        setFatalError(e?.message || String(e));
+
+        // IMPORTANT: degrade gracefully
+        // If we already have some data, do not fatal. Otherwise show fatal.
+        const haveAnything = (sectorLeaders && sectorLeaders.length) || (tickerLeaders && tickerLeaders.length);
+
+        if (haveAnything) {
+          setMissingNote("Market data partially failed to load. Showing whatever was already available.");
+        } else {
+          setFatalError(e?.message || String(e));
+        }
+
         setDataSourceNote(
           "Market data may occasionally fail/lag. If it fails, it’s usually the function endpoint not returning JSON."
         );
@@ -278,10 +458,12 @@ export default function MarketPulse({
     };
 
     run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     tickersForSpendSectors,
-    tickerToSector,
-    spendSectors,
+    tickerToRolledSector,
+    spendSectorsRaw,
+    spendSectorsRolled,
     timeframeDays,
     asOfDate,
     timeMode,
@@ -296,13 +478,15 @@ export default function MarketPulse({
 
   const pulseNarrative = useMemo(() => {
     return buildPulseNarrative({
-      spendSectors,
+      spendSectorsRaw,
+      spendSectorsRolled,
+      sectorLeaders,
       tickerLeaders,
       timeframeDays,
       asOfDate: asOfDate || asOfComputed || "",
       timeMode
     });
-  }, [spendSectors, tickerLeaders, timeframeDays, asOfDate, asOfComputed, timeMode]);
+  }, [spendSectorsRaw, spendSectorsRolled, sectorLeaders, tickerLeaders, timeframeDays, asOfDate, asOfComputed, timeMode]);
 
   return (
     <div style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
@@ -321,8 +505,6 @@ export default function MarketPulse({
         </div>
       ) : null}
 
-      {/* ✅ Removed the standalone As-of line between controls and narrative */}
-
       <div style={{ marginTop: "0.5rem", marginBottom: "0.75rem" }}>
         <div
           style={{
@@ -337,6 +519,20 @@ export default function MarketPulse({
         </div>
       </div>
 
+      {missingNote ? (
+        <div
+          style={{
+            padding: "0.6rem 0.75rem",
+            background: "#eef6ff",
+            border: "1px solid #cfe8ff",
+            marginBottom: "0.75rem",
+            borderRadius: UI.RADIUS_SOFT
+          }}
+        >
+          <b>Note:</b> {missingNote}
+        </div>
+      ) : null}
+
       {fatalError ? (
         <div
           style={{
@@ -348,15 +544,13 @@ export default function MarketPulse({
           }}
         >
           <b>Market Pulse error:</b>
-          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: UI.FONT_BODY }}>
-            {fatalError}
-          </pre>
+          <pre style={{ marginTop: "0.5rem", whiteSpace: "pre-wrap", fontSize: UI.FONT_BODY }}>{fatalError}</pre>
         </div>
       ) : null}
 
       <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "0.25rem", color: UI.PRIMARY }}>
         Top 5 Sector Leaders ({timeframeDays}D){" "}
-        <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— ETF proxies</span>
+        <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>— Market • ETF proxies</span>
         {loading ? <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700 }}> (Loading…)</span> : null}
       </div>
 
@@ -375,17 +569,21 @@ export default function MarketPulse({
       <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem", color: UI.PRIMARY }}>
         Top 10 Runners ({timeframeDays}D){" "}
         <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
-          — based on your top spend sectors
+          — Your activity-led (based on your top spend categories)
         </span>
       </div>
 
-      <p style={{ fontSize: UI.FONT_BODY }}>
-        Top Spend Sectors (Spend): <b>{spendSectors.join(", ") || "—"}</b>
+      <p style={{ fontSize: UI.FONT_BODY, marginBottom: "0.25rem" }}>
+        Top Spend Categories (Spend): <b>{formatSpendSectorsWithRollup(spendSectorsRaw) || "—"}</b>
+      </p>
+
+      <p style={{ fontSize: UI.FONT_BODY, marginTop: 0 }}>
+        Market Roll-up Buckets: <b>{(spendSectorsRolled || []).join(", ") || "—"}</b>
       </p>
 
       {tickerLeaders.length === 0 ? (
         <p style={{ fontSize: UI.FONT_BODY }}>
-          No runners shown yet (upload transactions + ensure sector mapping produced at least one recognized sector).
+          No runners shown yet (upload transactions + ensure sector mapping produced at least one recognized sector, and market cache is warmed).
         </p>
       ) : (
         <ol style={{ fontSize: UI.FONT_BODY }}>
@@ -413,11 +611,7 @@ export default function MarketPulse({
           </div>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
             {tickerLeaders.map((x) => (
-              <button
-                key={"add-" + x.ticker}
-                onClick={() => onAddTicker(x.ticker)}
-                style={{ padding: "0.35rem 0.6rem" }}
-              >
+              <button key={"add-" + x.ticker} onClick={() => onAddTicker(x.ticker)} style={{ padding: "0.35rem 0.6rem" }}>
                 Add {x.ticker}
               </button>
             ))}
