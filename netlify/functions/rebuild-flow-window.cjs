@@ -1,10 +1,24 @@
-// FILE: netlify/functions/rebuild-flow-window.js
+// FILE: netlify/functions/rebuild-flow-window.cjs
+//
 // CommonJS (Netlify-safe)
 // Admin-only endpoint to rebuild Flow aggregates/signals for a given window.
-// Option A: sector-level signals (plus optional runner items if you add ticker mapping later)
+//
+// IMPORTANT: Your stated intent:
+// - Flow includes ALL tx across the database in the window (no flowAccess gating).
+// - Still respects admin deletions: if a batch is deleted, its tx do not count.
+//
+// How deletions are respected (P0):
+// - ingest writes tx docs containing { uid, batchId, windowKey }.
+// - rebuild queries collectionGroup("tx") by postedDate, then checks originating
+//   batch status with a small concurrency limit + caching.
+//
+// Output:
+// - flow_agg/{windowId} window summary
+// - flow_agg/{windowId}/sectors/{sectorId} sector breakdown
+// - flow_signals/{windowId}__sector__{sectorId} items for the UI
+//
 
 const admin = require("firebase-admin");
-const crypto = require("crypto");
 
 function initAdmin() {
   if (admin.apps.length) return;
@@ -28,57 +42,28 @@ function initAdmin() {
     credential: admin.credential.cert(svc)
   });
 }
-
 initAdmin();
+
 const db = admin.firestore();
+const FLOW_LIMITS = require("../shared/flowLimits.json");
 
 /**
- * "Defensible" defaults (production-leaning).
- * You can loosen these for early beta, but this is the strong version.
+ * Defensible defaults (tune later).
  */
 const LIMITS = {
-  // Sector eligibility (to show as Verified)
-  MIN_SECTOR_USERS: 25,
-  MIN_SECTOR_EVENTS: 250,
-  MAX_SECTOR_MAX_USER_SHARE: 0.10,
-  MAX_SECTOR_TOP3_SHARE: 0.25,
+  // Sector eligibility (Verified) — mapped to shared thresholds
+  MIN_SECTOR_USERS: FLOW_LIMITS.MIN_CONTRIBUTORS,
+  MIN_SECTOR_EVENTS: FLOW_LIMITS.MIN_EVENTS,
+  MAX_SECTOR_MAX_USER_SHARE: FLOW_LIMITS.MAX_USER_SHARE,
+  MAX_SECTOR_TOP3_SHARE: FLOW_LIMITS.MAX_TOP3_SHARE,
 
   // Window-level credibility
-  MIN_WINDOW_USERS: 50,
+  MIN_WINDOW_USERS: FLOW_LIMITS.MIN_WINDOW_USERS,
 
-  // Delta (for "stability" / trend tagging)
-  // (Not used as a hard gate unless you want it)
-  MIN_ABS_DELTA_FOR_TREND: 0.15,
-
-  // Safety: cap reads
-  MAX_DOCS_PER_WINDOW: 250000
+  // Safety caps
+  MAX_TX_DOCS_PER_WINDOW: FLOW_LIMITS.MAX_TX_DOCS_PER_WINDOW,
+  BATCH_STATUS_CONCURRENCY: FLOW_LIMITS.BATCH_STATUS_CONCURRENCY
 };
-
-// Server-side sector mapping (matches your Drip style)
-const MERCHANT_TO_SECTOR = [
-  {
-    match: ["AMAZON", "TARGET", "WALMART", "COSTCO", "HOME DEPOT", "LOWE", "TJ MAX", "TJMAX", "KROGER"],
-    sector: "Consumer & Retail"
-  },
-  { match: ["CVS", "WALGREENS", "RITE AID", "KAISER", "BLUE CROSS", "UNITEDHEALTH"], sector: "Healthcare" },
-  { match: ["MCDONALD", "STARBUCKS", "CHIPOTLE", "DOMINO", "YUM", "TACO BELL", "KFC", "PIZZA"], sector: "Restaurants" },
-  { match: ["UBER", "LYFT", "DELTA", "SOUTHWEST", "AMERICAN AIRLINES", "FEDEX", "UPS"], sector: "Transportation" },
-  { match: ["EXXON", "CHEVRON", "SHELL", "VALERO", "PHILLIPS 66", "SCHLUMBERGER", "SLB"], sector: "Energy" },
-  { match: ["APPLE", "MICROSOFT", "GOOGLE", "META", "FACEBOOK", "NVIDIA", "AMD", "ORACLE"], sector: "Technology" },
-  { match: ["NETFLIX", "DISNEY", "HULU", "SPOTIFY", "WARNER"], sector: "Media & Entertainment" },
-  {
-    match: ["CHASE", "JPMORGAN", "JPMORGAN CHASE", "BANK OF AMERICA", "WELLS FARGO", "CITI", "GOLDMAN", "VISA", "MASTERCARD", "AMEX"],
-    sector: "Financials"
-  }
-];
-
-function inferSector(merchantNorm) {
-  const m = String(merchantNorm || "").toUpperCase();
-  for (const rule of MERCHANT_TO_SECTOR) {
-    if (rule.match.some((k) => m.includes(k))) return rule.sector;
-  }
-  return "Other / Unmapped";
-}
 
 function endOfMonthISO(iso) {
   const dt = new Date(iso);
@@ -91,40 +76,45 @@ function computeWindow({ days, asOfISO, mode }) {
   const asOf = String(asOfISO || new Date().toISOString().slice(0, 10));
   const endISO = mode === "monthEnd" ? endOfMonthISO(asOf) : asOf;
   if (!endISO) throw new Error("Bad asOf for window");
+
   const end = new Date(endISO);
   if (Number.isNaN(end.getTime())) throw new Error("Bad end date for window");
+
   const start = new Date(end);
   start.setDate(start.getDate() - Number(days || 30));
-  return {
-    asOf,
-    endISO,
-    startISO: start.toISOString().slice(0, 10)
-  };
+
+  const startISO = start.toISOString().slice(0, 10);
+  const windowId = `flow_${Number(days || 30)}d_${mode}_asof_${endISO}`;
+
+  return { days: Number(days || 30), mode: String(mode || "trailing"), asOf, startISO, endISO, windowId };
 }
 
 function json(statusCode, obj) {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    },
     body: JSON.stringify(obj)
   };
 }
 
+function safeIdSegment(s) {
+  return String(s || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_ -]/g, "")
+    .replace(/\s+/g, "_")
+    .slice(0, 120);
+}
+
 function buildSignalLine({ maxUserShare, users }, deltaPct) {
   const concentration =
-    maxUserShare >= 0.12 ? "High spend concentration" :
-    maxUserShare >= 0.08 ? "Moderate concentration" :
-    "Broad-based";
+    maxUserShare >= 0.12 ? "High spend concentration" : maxUserShare >= 0.08 ? "Moderate concentration" : "Broad-based";
 
-  const breadth =
-    users >= 80 ? "High breadth" :
-    users >= 40 ? "Medium breadth" :
-    "Narrow breadth";
+  const breadth = users >= 80 ? "High breadth" : users >= 40 ? "Medium breadth" : "Narrow breadth";
 
-  const stability =
-    Math.abs(deltaPct) < 0.20 ? "Stable" :
-    Math.abs(deltaPct) < 0.40 ? "Emerging" :
-    "Spiky";
+  const stability = Math.abs(deltaPct) < 0.20 ? "Stable" : Math.abs(deltaPct) < 0.40 ? "Emerging" : "Spiky";
 
   return `${concentration} · ${breadth} · ${stability}`;
 }
@@ -139,7 +129,7 @@ function eligibilitySector({ users, events, maxUserShare, top3Share }, windowCre
   return { passed: reasons.length === 0, reasons };
 }
 
-// Admin auth: requires admins/{uid} exists (your current pattern)
+// Admin auth: requires admins/{uid} exists
 async function requireAdmin(event) {
   const auth = event.headers.authorization || event.headers.Authorization || "";
   const m = String(auth).match(/^Bearer\s+(.+)$/i);
@@ -154,19 +144,36 @@ async function requireAdmin(event) {
   return uid;
 }
 
-// Iterates query results without blowing memory too fast.
-// NOTE: Firestore does not truly stream; this is still an in-memory list from query.get().
-// For MVP, we accept it but cap MAX_DOCS_PER_WINDOW.
-async function loadWindowRows({ startISO, endISO }) {
-  // postedDate is YYYY-MM-DD string; lexicographically sortable
+// Simple concurrency limiter
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+
+  async function worker() {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx], idx);
+    }
+  }
+
+  const workers = [];
+  const n = Math.max(1, Math.min(limit || 1, items.length || 1));
+  for (let k = 0; k < n; k++) workers.push(worker());
+  await Promise.all(workers);
+  return out;
+}
+
+// Load tx docs for the window (global)
+async function loadTxDocsForWindow({ startISO, endISO }) {
   const snap = await db
     .collectionGroup("tx")
     .where("postedDate", ">=", startISO)
     .where("postedDate", "<=", endISO)
     .get();
 
-  if (snap.size > LIMITS.MAX_DOCS_PER_WINDOW) {
-    throw new Error(`Window too large (${snap.size}). Increase filters or raise MAX_DOCS_PER_WINDOW.`);
+  if (snap.size > LIMITS.MAX_TX_DOCS_PER_WINDOW) {
+    throw new Error(`Window too large (${snap.size}). Raise MAX_TX_DOCS_PER_WINDOW or narrow the window.`);
   }
 
   const rows = [];
@@ -174,25 +181,72 @@ async function loadWindowRows({ startISO, endISO }) {
   return rows;
 }
 
-function aggregateSectors(rows) {
-  // sector -> { totalSpend, events, userTotals: Map<uid, totalSpend> }
+// Batch-status cache: uid__batchId -> "active" | "deleted" | null
+async function fetchBatchStatus(uid, batchId) {
+  if (!uid || !batchId) return null;
+  const ref = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data() || {};
+  return data.adminStatus || "active";
+}
+
+// Aggregate spend by sector, excluding deleted batches, and counting only spend (amount < 0)
+async function aggregateSectorsGlobal(rows) {
+  // sector -> { totalSpend, events, userTotals: Map<uid, spend> }
   const buckets = new Map();
   const cohortUsers = new Set();
 
+  // Build unique batch keys for status lookups
+  const batchKeys = [];
+  const seenBatchKey = new Set();
+
+  for (const r of rows) {
+    const uid = String(r.uid || "").trim();
+    const batchId = String(r.batchId || "").trim();
+    if (!uid || !batchId) continue;
+
+    const k = `${uid}__${batchId}`;
+    if (!seenBatchKey.has(k)) {
+      seenBatchKey.add(k);
+      batchKeys.push({ k, uid, batchId });
+    }
+  }
+
+  // Fetch batch statuses with concurrency + caching
+  const statusByKey = new Map();
+  await mapLimit(batchKeys, LIMITS.BATCH_STATUS_CONCURRENCY, async (b) => {
+    const s = await fetchBatchStatus(b.uid, b.batchId);
+    statusByKey.set(b.k, s);
+    return null;
+  });
+
+  // Aggregate
   for (const r of rows) {
     const uid = String(r.uid || "").trim();
     if (!uid) continue;
-    cohortUsers.add(uid);
 
-    const merchantNorm = String(r.merchantNorm || "");
-    const sector = inferSector(merchantNorm);
-    if (!sector || sector === "Other / Unmapped") continue;
+    const batchId = String(r.batchId || "").trim();
+    const k = uid && batchId ? `${uid}__${batchId}` : null;
 
+    // Respect deletions
+    if (k) {
+      const st = statusByKey.get(k);
+      if (st === "deleted") continue;
+    }
+
+    // Only include spend (amount < 0)
     const amt = Number(r.amount);
     if (!Number.isFinite(amt)) continue;
+    if (amt >= 0) continue;
 
-    // Treat spend magnitude; if your uploads use positive spend, abs() is safe.
     const spend = Math.abs(amt);
+    if (!spend) continue;
+
+    cohortUsers.add(uid);
+
+    const sector = String(r.sector || "Other / Unmapped");
+    if (!sector || sector === "Other / Unmapped") continue;
 
     let b = buckets.get(sector);
     if (!b) {
@@ -206,16 +260,16 @@ function aggregateSectors(rows) {
   }
 
   // Finalize per sector
-  const out = new Map();
+  const sectors = new Map();
   for (const [sector, b] of buckets.entries()) {
     const totals = Array.from(b.userTotals.values()).sort((a, c) => c - a);
     const users = totals.length;
     const totalSpend = b.totalSpend || 0;
 
     const maxUserShare = users && totalSpend ? totals[0] / totalSpend : 0;
-    const top3Share = users && totalSpend ? (totals.slice(0, 3).reduce((s, x) => s + x, 0) / totalSpend) : 0;
+    const top3Share = users && totalSpend ? totals.slice(0, 3).reduce((s, x) => s + x, 0) / totalSpend : 0;
 
-    out.set(sector, {
+    sectors.set(sector, {
       sector,
       totalSpend,
       events: b.events,
@@ -225,31 +279,19 @@ function aggregateSectors(rows) {
     });
   }
 
-  return { sectors: out, uniqueUsers: cohortUsers.size };
+  return { sectors, uniqueUsers: cohortUsers.size };
 }
 
 function normalizeWeights(sectorAggMap) {
   const items = Array.from(sectorAggMap.values());
   const total = items.reduce((s, x) => s + (Number.isFinite(x.totalSpend) ? x.totalSpend : 0), 0) || 0;
+
   return items
     .map((x) => ({
       sector: x.sector,
       weight: total ? x.totalSpend / total : 0
     }))
     .sort((a, b) => b.weight - a.weight);
-}
-
-function stableWindowId(days, mode, endISO) {
-  // same format you used in community-flow.js
-  return `flow_${days}d_${mode}_asof_${endISO}`;
-}
-
-function safeIdSegment(s) {
-  return String(s || "")
-    .trim()
-    .replace(/[^A-Za-z0-9_ -]/g, "")
-    .replace(/\s+/g, "_")
-    .slice(0, 120);
 }
 
 // MAIN
@@ -272,14 +314,14 @@ exports.handler = async (event) => {
     const prevAsOf = prevEnd.toISOString().slice(0, 10);
     const w1 = computeWindow({ days, asOfISO: prevAsOf, mode });
 
-    // Load canonical tx
-    const [currRows, prevRows] = await Promise.all([loadWindowRows(w0), loadWindowRows(w1)]);
+    // Load tx (global) for both windows
+    const [currRows, prevRows] = await Promise.all([loadTxDocsForWindow(w0), loadTxDocsForWindow(w1)]);
 
-    // Aggregate
-    const curr = aggregateSectors(currRows);
-    const prev = aggregateSectors(prevRows);
+    // Aggregate (global, respects deletions, spend-only)
+    const curr = await aggregateSectorsGlobal(currRows);
+    const prev = await aggregateSectorsGlobal(prevRows);
 
-    const windowId = stableWindowId(days, mode, w0.endISO);
+    const windowId = w0.windowId;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     const windowCredible = curr.uniqueUsers >= LIMITS.MIN_WINDOW_USERS;
@@ -311,25 +353,29 @@ exports.handler = async (event) => {
       { merge: true }
     );
 
-    // Write sector docs + flow_signals (Option A)
+    // Write sector docs + flow_signals
     const writes = [];
 
+    // Precompute total spend (so we don't recompute inside the loop)
+    const totalSpendAll = Array.from(curr.sectors.values()).reduce((s, x) => s + (x.totalSpend || 0), 0) || 0;
+
     for (const [sector, currS] of curr.sectors.entries()) {
-      const prevS = prev.sectors.get(sector) || { totalSpend: 0, events: 0, users: 0, maxUserShare: 0, top3Share: 0 };
+      const prevS = prev.sectors.get(sector) || {
+        totalSpend: 0,
+        events: 0,
+        users: 0,
+        maxUserShare: 0,
+        top3Share: 0
+      };
+
       const deltaPct =
-        prevS.totalSpend > 0 ? (currS.totalSpend - prevS.totalSpend) / prevS.totalSpend : (currS.totalSpend > 0 ? 1 : 0);
+        prevS.totalSpend > 0 ? (currS.totalSpend - prevS.totalSpend) / prevS.totalSpend : currS.totalSpend > 0 ? 1 : 0;
 
       const eligibility = eligibilitySector(currS, windowCredible);
 
-      // Sector doc
       const sectorDocId = safeIdSegment(sector);
       const sectorRef = db.collection("flow_agg").doc(windowId).collection("sectors").doc(sectorDocId);
 
-      // weight computed off current totals
-      // We'll compute weights from normalized weights map
-      // (We can precompute for speed)
-      // Simple: compute now:
-      const totalSpendAll = Array.from(curr.sectors.values()).reduce((s, x) => s + (x.totalSpend || 0), 0) || 0;
       const weight = totalSpendAll ? currS.totalSpend / totalSpendAll : 0;
 
       writes.push(
@@ -350,9 +396,6 @@ exports.handler = async (event) => {
         )
       );
 
-      // flow_signals item (what your MonthlyFlow consumes)
-      // IMPORTANT: we keep `ticker` as a string for compatibility,
-      // but set `type:"sector"` so you can distinguish later.
       const signalDocId = `${windowId}__sector__${sectorDocId}`;
       const signalRef = db.collection("flow_signals").doc(signalDocId);
 
@@ -361,10 +404,10 @@ exports.handler = async (event) => {
           {
             windowId,
             type: "sector",
-            ticker: sector.toUpperCase().replace(/\s+/g, "_"),
+            ticker: sector.toUpperCase().replace(/\s+/g, "_"), // kept for compatibility
             sector,
             signal: buildSignalLine(currS, deltaPct),
-            count: Math.round(currS.totalSpend), // keeps numeric like your feed
+            count: Math.round(currS.totalSpend), // numeric for UI
             date: w0.endISO,
 
             // credibility metadata for Verified badge
@@ -382,7 +425,6 @@ exports.handler = async (event) => {
       );
     }
 
-    // Batch write (Promise.all is fine here; you can chunk if huge)
     await Promise.all(writes);
 
     return json(200, {

@@ -1,0 +1,122 @@
+// FILE: firestore.rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // -----------------------------
+    // USERS
+    // -----------------------------
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      // Allow first-login doc creation
+      allow create: if isOwner(uid);
+
+      // ✅ Owner can only change safe fields
+      // IMPORTANT: must NOT also require "role/flowAccess/etc == resource.data.*"
+      // because those fields might not exist yet on first writes or older docs.
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "email",
+          "lastLoginAt",
+          "flowConsent",
+          "canPost",
+          "onboardingComplete",
+          "updatedAt"
+        ]);
+
+      // ✅ Admin can update anything
+      allow update: if isAdmin();
+
+      // Only admin can delete user docs
+      allow delete: if isAdmin();
+    }
+
+    // -----------------------------
+    // ADMINS
+    // -----------------------------
+    match /admins/{uid} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // UPLOADS + TX
+    // -----------------------------
+    match /uploads/{uid}/{docPath=**} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /normalized_transactions/{uid}/{docPath=**} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // -----------------------------
+    // FLOW (public read, admin write)
+    // -----------------------------
+    match /flow_signals/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /flow_agg/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // -----------------------------
+    // MERCHANT RULES
+    // -----------------------------
+    match /merchant_rules/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // -----------------------------
+    // WAITLIST
+    // -----------------------------
+    match /waitlist/{id} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // -----------------------------
+    // POSTS
+    // -----------------------------
+    match /posts/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /posts_pending/{id} {
+      allow create: if signedIn();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // -----------------------------
+    // STRIPE EVENTS (admin only)
+    // -----------------------------
+    match /stripe_events/{id} {
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

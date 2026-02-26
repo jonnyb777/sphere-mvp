@@ -1,10 +1,4 @@
-export const FLOW_LIMITS = {
-  MIN_CONTRIBUTORS: 20,
-  MIN_EVENTS: 200,
-  MAX_USER_SHARE: 0.15,
-  MAX_TOP3_SHARE: 0.35,
-  MIN_DELTA: 0.15
-};
+import FLOW_LIMITS from "../../shared/flowLimits.json";
 
 export function checkFlowEligibility(bucket) {
   const reasons = [];

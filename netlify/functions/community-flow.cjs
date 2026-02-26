@@ -120,8 +120,33 @@ function jsonResponse(statusCode, obj) {
   };
 }
 
+async function mapLimit(items, limitN, worker) {
+  const limit = Math.max(1, Number(limitN || 8));
+  const results = new Array(items.length);
+  let i = 0;
+
+  async function runOne() {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      results[idx] = await worker(items[idx], idx);
+    }
+  }
+
+  const runners = [];
+  for (let k = 0; k < Math.min(limit, items.length); k++) runners.push(runOne());
+  await Promise.all(runners);
+  return results;
+}
+
 async function getFlowEligibleUsers() {
-  const snap = await db.collection("users").where("flowAccess", "==", true).limit(300).get();
+  const snap = await db
+    .collection("users")
+    .where("flowAccess", "==", true)
+    .where("flowConsent", "==", true)
+    .limit(300)
+    .get();
+
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
@@ -194,61 +219,102 @@ exports.handler = async (event) => {
     const byKey = new Map();
     const bySector = new Map();
 
-    for (const u of users) {
-      const uid = u.uid || u.id;
-      if (!uid) continue;
+    const perUser = await mapLimit(users, 8, async (u) => {
+  const uid = u.uid || u.id;
+  if (!uid) return null;
 
-      const active = await getActiveBatchForWindow(uid, win.windowKey);
-      if (!active?.batchId) continue;
+  const active = await getActiveBatchForWindow(uid, win.windowKey);
+  if (!active?.batchId) return null;
 
-      const b = await getBatchMeta(uid, active.batchId);
-      if (!b) continue;
+  const b = await getBatchMeta(uid, active.batchId);
+  if (!b) return null;
 
-      // REQUIRED: ignore deleted uploads
-      if (b.adminStatus === "deleted") continue;
+  // Respect admin deletions
+  if (b.adminStatus === "deleted") return null;
 
-      const txIds = await getTxIdsForBatch(uid, active.batchId, 5000);
-      if (!txIds.length) continue;
+  const txIds = await getTxIdsForBatch(uid, active.batchId, 5000);
+  if (!txIds.length) return null;
 
-      const txDocs = await getTxDocs(uid, txIds);
+  const txDocs = await getTxDocs(uid, txIds);
 
-      for (const tx of txDocs) {
-        const d = String(tx.postedDate || "");
-        if (!d || d < win.startISO || d > win.endISO) continue;
+  // Return local aggregates (no shared mutation here)
+  const localByKey = new Map();    // key -> { spend, events, usersSet, userSpend }
+  const localBySector = new Map(); // sector -> spend
 
-        const amt = Number(tx.amount ?? 0);
-        if (!Number.isFinite(amt)) continue;
+  for (const tx of txDocs) {
+    const d = String(tx.postedDate || "");
+    if (!d || d < win.startISO || d > win.endISO) continue;
 
-        const spend = Math.abs(amt);
-        if (!spend) continue;
+    const amt = Number(tx.amount ?? 0);
+    if (!Number.isFinite(amt)) continue;
 
-        const spendSector = String(tx.sector || "Other / Unmapped");
-        const sector = rollupSector(spendSector);
+    // ✅ IMPORTANT: Only spending (negative). Don’t count income/refunds.
+    if (amt >= 0) continue;
 
-        const pk = pickKeyForTickerRow(tx);
-        if (!pk.key) continue;
+    const spend = Math.abs(amt);
+    if (!spend) continue;
 
-        bySector.set(sector, (bySector.get(sector) || 0) + spend);
+    const spendSector = String(tx.sector || "Other / Unmapped");
+    const sector = rollupSector(spendSector);
 
-        if (!byKey.has(pk.key)) {
-          byKey.set(pk.key, {
-            key: pk.key,
-            ticker: pk.ticker,
-            sector,
-            spend: 0,
-            usersSet: new Set(),
-            events: 0,
-            userSpend: new Map()
-          });
-        }
+    const pk = pickKeyForTickerRow(tx);
+    if (!pk.key) continue;
 
-        const row = byKey.get(pk.key);
-        row.spend += spend;
-        row.events += 1;
-        row.usersSet.add(uid);
-        row.userSpend.set(uid, (row.userSpend.get(uid) || 0) + spend);
-      }
+    localBySector.set(sector, (localBySector.get(sector) || 0) + spend);
+
+    if (!localByKey.has(pk.key)) {
+      localByKey.set(pk.key, {
+        key: pk.key,
+        ticker: pk.ticker,
+        sector,
+        spend: 0,
+        events: 0,
+        usersSet: new Set(),
+        userSpend: new Map()
+      });
     }
+
+    const row = localByKey.get(pk.key);
+    row.spend += spend;
+    row.events += 1;
+    row.usersSet.add(uid);
+    row.userSpend.set(uid, (row.userSpend.get(uid) || 0) + spend);
+  }
+
+  return { localByKey, localBySector };
+});
+
+// Merge results
+for (const r of perUser) {
+  if (!r) continue;
+
+  for (const [sector, spend] of r.localBySector.entries()) {
+    bySector.set(sector, (bySector.get(sector) || 0) + spend);
+  }
+
+  for (const [key, row] of r.localByKey.entries()) {
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        key: row.key,
+        ticker: row.ticker,
+        sector: row.sector,
+        spend: 0,
+        usersSet: new Set(),
+        events: 0,
+        userSpend: new Map()
+      });
+    }
+
+    const agg = byKey.get(key);
+    agg.spend += row.spend;
+    agg.events += row.events;
+
+    for (const uid of row.usersSet) agg.usersSet.add(uid);
+    for (const [uid, s] of row.userSpend.entries()) {
+      agg.userSpend.set(uid, (agg.userSpend.get(uid) || 0) + s);
+    }
+  }
+}
 
     const rows = [];
     for (const r of byKey.values()) {

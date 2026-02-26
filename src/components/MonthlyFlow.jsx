@@ -4,6 +4,9 @@ import TimeframeControls from "./TimeframeControls";
 import { Card } from "./ui/UiKit";
 import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool, Badge, MiniStat } from "./SectionUI";
 import { rollUpSector, toEtfSectorName } from "../utils/sectorRollup";
+import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
+import { markFirstFlowView } from "../utils/userStats";
 
 function pct(n) {
   if (n === null || n === undefined) return "—";
@@ -42,7 +45,7 @@ function withinWindow(itemDate, timeframeDays, asOfISO, timeMode) {
   return dt >= start && dt <= end;
 }
 
-async function fetchJsonNetlifyFunction(pathWithQuery) {
+async function fetchJsonNetlifyFunction(pathWithQuery, opts = {}) {
   const isLocalhost =
     window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1";
   const port = String(window?.location?.port || "");
@@ -56,7 +59,10 @@ async function fetchJsonNetlifyFunction(pathWithQuery) {
 
   for (const url of tryUrls) {
     try {
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: opts.headers || undefined
+      });
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       const text = await res.text();
 
@@ -181,6 +187,7 @@ export default function MonthlyFlow({
   userRunners,
   onCommunityTopSectorsChange,
   onCommunityRunnersChange,
+  onCommunityMerchantsChange,
   section = "all",
   timeframeDays = 30,
   asOfDate,
@@ -188,7 +195,10 @@ export default function MonthlyFlow({
 
   setTimeframeDays,
   setAsOfDate,
-  setTimeMode
+  setTimeMode,
+  userUid,
+  flowConsent,
+  flowAccess
 }) {
   const embedded = section !== "all";
 
@@ -203,6 +213,30 @@ export default function MonthlyFlow({
   const [openPulse, setOpenPulse] = usePersistedBool("sphere:flow:open:pulse", true);
   const [openAlign, setOpenAlign] = usePersistedBool("sphere:flow:open:alignment", true);
   const [openTrustPanel, setOpenTrustPanel] = usePersistedBool("sphere:flow:open:trustPanel", false);
+
+  const [consent, setConsent] = useState(!!flowConsent);
+  const hasAccess = !!flowAccess;
+
+  // ✅ NEW: mark first Flow view (unlock milestone)
+  useEffect(() => {
+    const uid = String(userUid || "").trim();
+    if (uid) markFirstFlowView(uid);
+  }, [userUid]);
+
+useEffect(() => {
+  setConsent(!!flowConsent);
+}, [flowConsent]);
+
+async function saveConsent(nextValue) {
+  const uid = String(userUid || "").trim();
+  if (!uid) throw new Error("Missing uid for Flow consent.");
+
+  await setDoc(
+    doc(db, "users", uid),
+    { flowConsent: !!nextValue, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
 
   const [openMonthlyMerchants, setOpenMonthlyMerchants] = usePersistedBool("sphere:flow:open:monthly:merchants", false);
   const [openMonthlySectors, setOpenMonthlySectors] = usePersistedBool("sphere:flow:open:monthly:sectors", false);
@@ -227,7 +261,10 @@ export default function MonthlyFlow({
             mode: timeMode || "trailing"
           });
 
-          json = await fetchJsonNetlifyFunction(`/.netlify/functions/community-flow?${qs.toString()}`);
+          json = await fetchJsonNetlifyFunction(
+  `/.netlify/functions/community-flow?${qs.toString()}`,
+  { requireAuth: true }
+);
         } catch (e) {
           console.warn("MonthlyFlow: community-flow function failed; falling back to static file", e);
           const res = await fetch("/community-flow.json", { cache: "no-store" });
@@ -354,6 +391,10 @@ export default function MonthlyFlow({
   }, [top10CommunityRunners, onCommunityRunnersChange]);
 
   useEffect(() => {
+  if (typeof onCommunityMerchantsChange === "function") onCommunityMerchantsChange(top10CommunityMerchants);
+}, [top10CommunityMerchants, onCommunityMerchantsChange]);
+
+  useEffect(() => {
     const run = async () => {
       setLeadersLoading(true);
       try {
@@ -367,7 +408,11 @@ export default function MonthlyFlow({
         });
 
         const json = await fetchJsonNetlifyFunction(`/.netlify/functions/market?${qs.toString()}`);
-        const items = Array.isArray(json.items) ? json.items : [];
+        const itemsRaw = Array.isArray(json.items) ? json.items : [];
+        const items = itemsRaw
+          .map((x) => ({ ...x, return30d: Number(x.return30d) }))
+          .filter((x) => Number.isFinite(x.return30d));
+
         items.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
         const top5 = items.slice(0, 5).map((x) => ({
@@ -428,40 +473,55 @@ export default function MonthlyFlow({
   }, [sectorLeaders]);
 
   const robustFlowRows = useMemo(() => {
-    const spendSet = new Set(communitySpendTickers);
-    const runnerSet = new Set(communityRunnerTickers);
+  const spendSet = new Set(communitySpendTickers);
+  const runnerSet = new Set(communityRunnerTickers);
 
-    const tickers = [...userSpend].slice(0, 25);
+  // let more through, then filter down to “flagged only”
+  const tickers = [...userSpend].slice(0, 80);
 
-    return tickers.map((tkr, idx) => {
-      const meta = communityByTicker.get(tkr) || null;
-      const sectorBucket = meta?.sector || "—"; // already rolled-up
-      const etfSector = toEtfSectorName(sectorBucket);
-      const isLeader = !!etfSector && leaderNames.has(etfSector);
+  const rows = tickers.map((tkr) => {
+    const meta = communityByTicker.get(tkr) || null;
+    const sectorBucket = meta?.sector || "—"; // already rolled-up
+    const etfSector = toEtfSectorName(sectorBucket);
+    const isLeader = !!etfSector && leaderNames.has(etfSector);
 
-      const isCommunitySpend = spendSet.has(tkr);
-      const isRunner = runnerSet.has(tkr);
+    const isCommunitySpend = spendSet.has(tkr);
+    const isRunner = runnerSet.has(tkr);
 
-      const sig = splitSignalLine(meta?.signal);
-      const count = Number.isFinite(meta?.count) ? meta.count : null;
+    const sig = splitSignalLine(meta?.signal);
+    const count = Number.isFinite(meta?.count) ? meta.count : null;
 
-      let trigger = "No signal overlap.";
-      if (isRunner && isCommunitySpend) trigger = "Runner + Community spend overlap.";
-      else if (isRunner) trigger = "Runner overlap.";
-      else if (isCommunitySpend) trigger = "Community spend overlap.";
+    let trigger = "No signal overlap.";
+    if (isRunner && isCommunitySpend) trigger = "Runner + Community spend overlap.";
+    else if (isRunner) trigger = "Runner overlap.";
+    else if (isCommunitySpend) trigger = "Community spend overlap.";
 
-      return {
-        idx: idx + 1,
-        ticker: tkr,
-        sectorBucket,
-        signalRaw: sig.raw,
-        signalParts: sig.parts,
-        count,
-        etfSector: etfSector || "—",
-        flags: { leader: isLeader, communitySpend: isCommunitySpend, runner: isRunner, trigger }
-      };
-    });
-  }, [userSpend, communityByTicker, communitySpendTickers, communityRunnerTickers, leaderNames]);
+    const hasAnyFlag = isLeader || isCommunitySpend || isRunner;
+
+    return {
+      ticker: tkr,
+      sectorBucket,
+      signalRaw: sig.raw,
+      signalParts: sig.parts,
+      count,
+      etfSector: etfSector || "—",
+      flags: { leader: isLeader, communitySpend: isCommunitySpend, runner: isRunner, trigger, hasAnyFlag }
+    };
+  });
+
+  // ✅ only show tickers that actually overlap / have flags
+  const filtered = rows.filter((r) => r.flags.hasAnyFlag);
+
+  // stable ordering (sector then ticker)
+  filtered.sort((a, b) => {
+    const s = String(a.sectorBucket || "").localeCompare(String(b.sectorBucket || ""), undefined, { sensitivity: "base" });
+    if (s !== 0) return s;
+    return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
+  });
+
+  // add # after filtering
+  return filtered.slice(0, 40).map((r, idx) => ({ ...r, idx: idx + 1 }));
+}, [userSpend, communityByTicker, communitySpendTickers, communityRunnerTickers, leaderNames]);
 
   const allowMonthlyBody = embedded ? true : openMonthly;
   const allowPulseBody = embedded ? true : openPulse;
@@ -552,6 +612,37 @@ export default function MonthlyFlow({
           </ul>
 
           <div style={{ marginTop: "0.6rem", fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+            <div style={{ marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: `1px solid ${UI.SOFT_BORDER}` }}>
+  <div style={{ fontWeight: 900, marginBottom: 6 }}>Contribution controls</div>
+</div>
+           <div style={{ marginTop: "0.75rem" }}>
+  <label style={{ cursor: "pointer", display: "flex", gap: 8, alignItems: "center" }}>
+    <input
+      type="checkbox"
+      checked={consent}
+      onChange={async (e) => {
+        const v = e.target.checked;
+        setConsent(v);
+
+        try {
+          await saveConsent(v);
+        } catch (err) {
+          console.error("saveConsent error:", err);
+          setConsent((prev) => !prev);
+          alert("Could not save Flow consent. Please try again.");
+        }
+      }}
+    />
+    <span>
+      Allow my anonymized data to contribute to Flow
+    </span>
+  </label>
+</div>
+{!hasAccess ? (
+    <div style={{ marginTop: 8, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+      Upgrade to Flow to participate in community aggregation.
+    </div>
+  ) : null}
             Informational only — Flow highlights patterns, not advice.
           </div>
         </div>
@@ -756,6 +847,25 @@ export default function MonthlyFlow({
                   <MiniStat label="Your runners↔Flow runners" value={overlapPersonalVsFlowRunners.length} />
                 </div>
               </SummaryBand>
+
+{robustFlowRows.length === 0 ? (
+  <div
+    style={{
+      marginTop: "0.75rem",
+      padding: "0.75rem",
+      background: UI.BAND_BG,
+      borderRadius: UI.RADIUS_SOFT,
+      border: `1px solid ${UI.SOFT_BORDER}`,
+      fontSize: UI.FONT_BODY
+    }}
+  >
+    <b>No overlap yet.</b>
+    <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+      None of your current spend tickers match Flow’s flagged community spend/runners (or leader proxies) for this window.
+      Try a different timeframe, upload more recent data, or wait for the community window to populate.
+    </div>
+  </div>
+) : null}
 
               <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: UI.FONT_BODY }}>

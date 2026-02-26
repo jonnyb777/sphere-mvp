@@ -141,10 +141,11 @@ function classifyMerchant(merchant = "") {
 
   for (const r of MERCHANT_RULES) {
     if (r.re.test(m)) {
+      const sector = r.sector || "Other / Unmapped";
       return {
-        sector: r.sector || "Other / Unmapped",
+        sector,
         ticker: r.ticker || null,
-        unmapped: (r.sector || "Other / Unmapped") === "Other / Unmapped"
+        unmapped: sector === "Other / Unmapped"
       };
     }
   }
@@ -237,7 +238,10 @@ async function requireAuth(event) {
 function jsonResponse(statusCode, obj) {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    },
     body: JSON.stringify(obj)
   };
 }
@@ -259,12 +263,14 @@ async function readTxIdSetForBatch(uid, batchId) {
 async function getOrInitWindowDoc(uid, windowKey, windowMeta) {
   const ref = db.collection("uploads").doc(uid).collection("windows").doc(windowKey);
   const snap = await ref.get();
+
   if (!snap.exists) {
     await ref.set(
       {
         ...windowMeta,
         activeBatchId: null,
         activeSetHash: null,
+        activeStats: null,
         activationAttempts24h: 0,
         lastAttemptAt: null,
         createdAt: nowTS(),
@@ -304,8 +310,25 @@ exports.handler = async (event) => {
     if (!rows.length) return jsonResponse(400, { error: "No rows provided" });
 
     const windowMeta = computeWindow({ days, asOfISO: asOf, mode });
-    const batchId = String(body.batchId || "").trim() || sha256Hex(`${uid}|${Date.now()}|${Math.random()}`);
+    // --- Stable batch id (idempotent) ---
+// If the client supplies a batchId, trust it.
+// Otherwise derive it from content so re-uploading the same file doesn't create a new "active" batch.
+function computeBatchIdFromUpload({ uid, filename, source, windowKey, txSetHash }) {
+  const f = String(filename || "").trim().toLowerCase();
+  const s = String(source || "upload").trim().toLowerCase();
+  const w = String(windowKey || "").trim();
+  const h = String(txSetHash || "").trim();
+  // include uid so different users don't collide; include windowKey so identical file used in different windows doesn't collide
+  return sha256Hex(`${uid}|${s}|${f}|${w}|${h}`);
+}
 
+let batchId = String(body.batchId || "").trim();
+if (!batchId) {
+  // txSetHash is computed later, so temporarily set a placeholder; we'll finalize after txSetHash is computed.
+  batchId = ""; 
+}
+
+    // Tracking
     const seenExact = new Set();
     const coverageDays = new Set();
     let dateOk = 0;
@@ -321,13 +344,17 @@ exports.handler = async (event) => {
     let refundCount = 0;
 
     const txIdsForBatch = [];
-    const unmappedNorms = new Set();
-    const unmappedSamples = [];
+
+    // Unmapped tracking
+    const unmappedCounts = new Map(); // merchantNorm -> count
+    const unmappedSamples = new Map(); // merchantNorm -> sample raw (best effort)
 
     function extractFields(r) {
       const merchantRaw =
         r.merchant ?? r.Merchant ?? r.name ?? r.Name ?? r.description ?? r.Description ?? r.payee ?? r.Payee ?? "";
+
       const amountRaw = r.amount ?? r.Amount ?? r.value ?? r.Value ?? r.amt ?? r.Amt ?? r.debit ?? r.Debit ?? 0;
+
       const dateRaw =
         r.date ??
         r.Date ??
@@ -348,6 +375,8 @@ exports.handler = async (event) => {
       const cls = classifyMerchant(String(merchantRaw || ""));
       const sector = cls?.sector || "Other / Unmapped";
       const ticker = cls?.ticker ? String(cls.ticker).toUpperCase().trim() : null;
+
+      // IMPORTANT: treat explicit "unmapped" as unmapped too
       const sectorUnmapped = !!cls?.unmapped || sector === "Other / Unmapped";
 
       return {
@@ -363,6 +392,7 @@ exports.handler = async (event) => {
       };
     }
 
+    // Parse
     const parsed = [];
     for (const r of rows) {
       const x = extractFields(r);
@@ -387,17 +417,20 @@ exports.handler = async (event) => {
       seenExact.add(txId);
 
       const amtAbs = Math.abs(x.amt);
-      if (x.amt < 0) {
-        spendTotal += amtAbs;
-      } else if (x.amt > 0) {
+      // IMPORTANT: spend should be NEGATIVE; refunds/income should be POSITIVE
+      if (x.amt < 0) spendTotal += amtAbs;
+      if (x.amt > 0) {
         incomeTotal += amtAbs;
-        refundCount += 1; // credit count (keeps existing field name)
+        refundCount += 1;
       }
 
       if (x.sectorUnmapped) {
-        unmappedNorms.add(x.merchantNorm);
-        if (unmappedSamples.length < 30) {
-          unmappedSamples.push({ merchant: x.merchantRaw, merchantNorm: x.merchantNorm });
+        const mn = x.merchantNorm;
+        unmappedCounts.set(mn, (unmappedCounts.get(mn) || 0) + 1);
+
+        // keep one sample per norm, cap at 30 samples stored in batchStats
+        if (!unmappedSamples.has(mn) && unmappedSamples.size < 30) {
+          unmappedSamples.set(mn, x.merchantRaw || null);
         }
       }
 
@@ -405,6 +438,7 @@ exports.handler = async (event) => {
       txIdsForBatch.push(txId);
     }
 
+    // Stats / Quality
     const uniqueTxCount = seenExact.size;
     const dupRowRate = safeDiv(exactDupes, totalRows);
     const dateParseRate = safeDiv(dateOk, totalRows);
@@ -421,23 +455,44 @@ exports.handler = async (event) => {
       merchantParseRate < THRESH.MIN_MERCHANT_PARSE;
 
     const minCoverageDays =
-      windowMeta.days === 30 ? THRESH.MIN_COVERAGE_DAYS_ABS_30D : Math.floor(windowMeta.days * THRESH.MIN_COVERAGE_DAYS_RATIO);
+      windowMeta.days === 30
+        ? THRESH.MIN_COVERAGE_DAYS_ABS_30D
+        : Math.floor(windowMeta.days * THRESH.MIN_COVERAGE_DAYS_RATIO);
 
     const flagged =
-      coverageDaysCount < minCoverageDays || dupRowRate > THRESH.MAX_DUP_ROW_RATE_SOFT || refundRate > THRESH.MAX_REFUND_RATE_SOFT;
+      coverageDaysCount < minCoverageDays ||
+      dupRowRate > THRESH.MAX_DUP_ROW_RATE_SOFT ||
+      refundRate > THRESH.MAX_REFUND_RATE_SOFT;
 
+      // Compute tx set hash now (needed for stable batchId)
+const txSetHash = sha256Hex(txIdsForBatch.slice().sort().join("|"));
+
+// Finalize stable batchId if client didn't provide one
+if (!batchId) {
+  batchId = computeBatchIdFromUpload({
+    uid,
+    filename,
+    source,
+    windowKey: windowMeta.windowKey,
+    txSetHash
+  });
+}
+
+    // Write tx + txids
     const txRoot = db.collection("uploads").doc(uid).collection("tx");
     const batchTxidsRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId).collection("txids");
 
     const writeOps = [];
     for (const x of parsed) {
-      const txRef = txRoot.doc(x.txId);
-      const txidRef = batchTxidsRef.doc(x.txId);
-
       writeOps.push({
-        ref: txRef,
+        ref: txRoot.doc(x.txId),
         data: {
           uid,
+
+          // IMPORTANT for Flow rebuild filtering:
+          // tie each tx back to the upload batch so deleted batches can be excluded.
+          batchId,
+
           postedDate: x.dateISO,
           amount: x.amt,
           amountCents: x.amountCents,
@@ -452,7 +507,10 @@ exports.handler = async (event) => {
         }
       });
 
-      writeOps.push({ ref: txidRef, data: { createdAt: nowTS() } });
+      writeOps.push({
+  ref: batchTxidsRef.doc(x.txId),
+  data: { createdAt: nowTS(), updatedAt: nowTS() }
+});
     }
 
     for (let i = 0; i < writeOps.length; i += 450) {
@@ -462,22 +520,14 @@ exports.handler = async (event) => {
       await batch.commit();
     }
 
-    // Corrected unmapped rollup: counts + proper batch reuse
-    if (unmappedNorms.size) {
-      const unmappedCounts = new Map();
-      for (const x of parsed) {
-        if (!x.sectorUnmapped) continue;
-        const k = x.merchantNorm;
-        if (!k) continue;
-        unmappedCounts.set(k, (unmappedCounts.get(k) || 0) + 1);
-      }
-
+    // Write per-merchant unmapped docs (REAL counts)
+    if (unmappedCounts.size) {
       let batch = db.batch();
       let ops = 0;
 
       for (const [mn, c] of unmappedCounts.entries()) {
         const ref = db.collection("uploads").doc(uid).collection("unmapped_merchants").doc(mn);
-        const sample = parsed.find((p) => p.merchantNorm === mn)?.merchantRaw || null;
+        const sample = unmappedSamples.get(mn) || null;
 
         batch.set(
           ref,
@@ -497,12 +547,24 @@ exports.handler = async (event) => {
           ops = 0;
         }
       }
-
       if (ops > 0) await batch.commit();
     }
 
-    const batchRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+    // Rollups for Admin UI
+    const unmappedTopObj = {};
+    Array.from(unmappedCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 25)
+      .forEach(([mn, c]) => {
+        unmappedTopObj[mn] = c;
+      });
 
+    const rollups = {
+      unmappedCount: unmappedCounts.size,
+      unmappedTop: unmappedTopObj
+    };
+
+    // Batch stats (keep backward compatible keys)
     const batchStats = {
       totalRows,
       parsedRows,
@@ -517,11 +579,11 @@ exports.handler = async (event) => {
       totalIncome: Number.isFinite(incomeTotal) ? incomeTotal : 0,
       refundCount,
       refundRate,
-      unmappedCount: unmappedNorms.size,
-      unmappedSample: unmappedSamples
+      unmappedCount: unmappedCounts.size,
+      unmappedSample: Array.from(unmappedSamples.entries())
+        .slice(0, 30)
+        .map(([merchantNorm, merchant]) => ({ merchant, merchantNorm }))
     };
-
-    const txSetHash = sha256Hex(txIdsForBatch.slice().sort().join("|"));
 
     const windowRef = await getOrInitWindowDoc(uid, windowMeta.windowKey, {
       windowKey: windowMeta.windowKey,
@@ -560,6 +622,7 @@ exports.handler = async (event) => {
     let totalSpendDeltaPct = null;
     let comparedToBatchId = activeBatchId;
 
+    // Replacement checks (only if we *might* accept)
     if (activeBatchId && decision === "processed") {
       const newSet = new Set(txIdsForBatch);
       const oldSet = await readTxIdSetForBatch(uid, activeBatchId);
@@ -588,26 +651,43 @@ exports.handler = async (event) => {
     const shouldReplace = !!activeBatchId && decision === "processed";
 
     let activated = false;
-    if (shouldActivate || shouldReplace) {
-      activated = true;
-      decision = "accepted";
 
-      await windowRef.set(
-        {
-          activeBatchId: batchId,
-          activeSetHash: txSetHash,
-          activeStats: {
-            uniqueTxCount,
-            coverageDays: coverageDaysCount,
-            totalSpend: batchStats.totalSpend
-          },
-          activationAttempts24h: attempts24h + 1,
-          lastAttemptAt: nowTS(),
-          updatedAt: nowTS()
-        },
-        { merge: true }
-      );
-    } else {
+    if (shouldActivate || shouldReplace) {
+  activated = true;
+  decision = "accepted";
+
+  // If we're replacing, mark the previous active batch as deleted/superseded
+  if (shouldReplace && activeBatchId && activeBatchId !== batchId) {
+    const prevBatchRef = db.collection("uploads").doc(uid).collection("batches").doc(activeBatchId);
+    await prevBatchRef.set(
+      {
+        adminStatus: "deleted",
+        deletedReason: "superseded_by_new_active_batch",
+        deletedAt: nowTS(),
+        supersededBy: batchId,
+        updatedAt: nowTS()
+      },
+      { merge: true }
+    );
+  }
+
+  await windowRef.set(
+    {
+      activeBatchId: batchId,
+      activeSetHash: txSetHash,
+      activeStats: {
+        uniqueTxCount,
+        coverageDays: coverageDaysCount,
+        totalSpend: batchStats.totalSpend
+      },
+      activationAttempts24h: attempts24h + 1,
+      lastAttemptAt: nowTS(),
+      updatedAt: nowTS()
+    },
+    { merge: true }
+  );
+} else {
+      // still track attempts + time
       await windowRef.set(
         {
           activationAttempts24h: attempts24h + 1,
@@ -618,6 +698,9 @@ exports.handler = async (event) => {
       );
     }
 
+    // Persist batch doc
+    const batchRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+
     await batchRef.set(
       {
         uid,
@@ -626,13 +709,18 @@ exports.handler = async (event) => {
         filename,
         createdAt: nowTS(),
         processedAt: nowTS(),
+
+        // IMPORTANT:
+        // downstream reads (Flow rebuild, Drip loaders) should treat adminStatus:"deleted" as excluded.
         adminStatus: "active",
+
         window: {
           ...windowMeta,
           start: windowMeta.startISO,
           end: windowMeta.endISO
         },
         stats: batchStats,
+        rollups,
         fingerprint: {
           txSetHash,
           sampleTxIds: txIdsForBatch.slice(0, 10)

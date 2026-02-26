@@ -1,0 +1,691 @@
+PWD=C:\Users\birlm\Desktop\sphere-mvp
+
+FILES_SCANNED=61
+
+=== STRIPE_IDEMPOTENCY ===
+src\App.jsx:21: // bootingUserDoc covers the Firestore user doc subscription
+src\App.jsx:34: // clean up prior user doc subscription
+src\components\MarketPulse.jsx:283: Subscriptions: ["NFLX", "SPOT", "DIS", "MSFT", "ADBE", "CRM"],
+src\components\MonthlyFlow.jsx:661: Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
+src\pages\Admin.jsx:76: "Subscriptions",
+src\utils\merchantSectorMap.js:13: "Subscriptions",
+src\utils\merchantSectorMap.js:44: * - subcategory helps roll-up / future filtering (Travel + Subscriptions)
+src\utils\merchantSectorMap.js:141: // Subscriptions (subtype-aware)
+src\utils\merchantSectorMap.js:142: // sector remains "Subscriptions" but subcategory helps roll-up + UX
+src\utils\merchantSectorMap.js:144: { re: /\bnetflix\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "NFLX" },
+src\utils\merchantSectorMap.js:145: { re: /\bspotify\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "SPOT" },
+src\utils\merchantSectorMap.js:146: { re: /\bhulu\b|\bdisney\+?\b|\bdisney plus\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "DIS" },
+src\utils\merchantSectorMap.js:147: { re: /\bamazon prime\b|\bprime video\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "AMZN" },
+src\utils\merchantSectorMap.js:150: { re: /\bsxm\b|\bsirius\s*xm\b|\bsiriusxm\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: null },
+src\utils\merchantSectorMap.js:153: { re: /\bapple\.com\/bill\b|\bapple services\b|\bicloud\b/i, sector: "Subscriptions", subcategory: "Digital Services", ticker: "AAPL" },
+src\utils\merchantSectorMap.js:154: { re: /\bgoogle one\b|\byoutube premium\b/i, sector: "Subscriptions", subcategory: "Digital Services", ticker: "GOOGL" },
+src\utils\merchantSectorMap.js:157: { re: /\badobe\b/i, sector: "Subscriptions", subcategory: "SaaS", ticker: "ADBE" },
+src\utils\merchantSectorMap.js:158: { re: /\bmicrosoft 365\b|\boffice 365\b/i, sector: "Subscriptions", subcategory: "SaaS", ticker: "MSFT" },
+src\utils\merchantSectorMap.js:159: { re: /\bdropbox\b/i, sector: "Subscriptions", subcategory: "SaaS", ticker: null },
+src\utils\merchantSectorMap.js:160: { re: /\bpatreon\b/i, sector: "Subscriptions", subcategory: "Creator", ticker: null },
+src\utils\merchantSectorMap.js:162: // ✅ NEW: Netlify subscription / hosting
+src\utils\merchantSectorMap.js:163: { re: /\bnetlify\b/i, sector: "Subscriptions", subcategory: "SaaS", ticker: null, tags: ["hosting"] },
+src\utils\merchantSectorMap.js:196: // NOTE: Removed the duplicate Netflix/Disney/Hulu/Spotify rule because Subscriptions matches first.
+src\utils\merchantSectorMap.js:197: // Keep Media & Entertainment for non-subscription media spending if you add later (movies, theaters, etc.)
+src\utils\merchantSectorMap.js:237: // Subscriptions (best-effort; add subtype hints)
+src\utils\merchantSectorMap.js:238: if (/\bsubscription\b|\brecurring\b|\bmember(ship)?\b/.test(m)) return { sector: "Subscriptions" };
+src\utils\sectorRollup.js:29: Subscriptions: "Technology", // default (mixed, but fine for now)
+netlify\functions\community-flow.cjs:83: if (s === "Technology" || s === "Telecom" || s === "Subscriptions") return "Technology";
+netlify\functions\create-checkout.js:84: const session = await stripe.checkout.sessions.create({
+netlify\functions\create-checkout.js:85: mode: "subscription",
+netlify\functions\ingest-upload.cjs:97: { re: /\bnetflix\b/i, sector: "Subscriptions", ticker: "NFLX" },
+netlify\functions\ingest-upload.cjs:98: { re: /\bspotify\b/i, sector: "Subscriptions", ticker: "SPOT" },
+netlify\functions\ingest-upload.cjs:99: { re: /\bhulu\b|\bdisney\+?\b|\bdisney plus\b/i, sector: "Subscriptions", ticker: "DIS" },
+netlify\functions\ingest-upload.cjs:100: { re: /\bamazon prime\b|\bprime video\b/i, sector: "Subscriptions", ticker: "AMZN" },
+netlify\functions\ingest-upload.cjs:129: if (/\bsubscription\b|\brecurring\b|\bmember(ship)?\b/.test(m)) return { sector: "Subscriptions" };
+netlify\functions\ingest-upload.cjs:313: // --- Stable batch id (idempotent) ---
+netlify\functions\ingest-upload.cjs:605: let decision = "processed";
+netlify\functions\ingest-upload.cjs:626: if (activeBatchId && decision === "processed") {
+netlify\functions\ingest-upload.cjs:650: const shouldActivate = !activeBatchId && decision === "processed";
+netlify\functions\ingest-upload.cjs:651: const shouldReplace = !!activeBatchId && decision === "processed";
+netlify\functions\ingest-upload.cjs:711: processedAt: nowTS(),
+netlify\functions\stripe-webhook.cjs:3: // - Idempotent via stripe_events/{eventId}
+netlify\functions\stripe-webhook.cjs:47: headers["stripe-signature"] ||
+netlify\functions\stripe-webhook.cjs:48: headers["Stripe-Signature"] ||
+netlify\functions\stripe-webhook.cjs:49: headers["STRIPE-SIGNATURE"] ||
+netlify\functions\stripe-webhook.cjs:55: // Idempotency
+netlify\functions\stripe-webhook.cjs:58: const ref = db.collection("stripe_events").doc(stripeEvent.id);
+netlify\functions\stripe-webhook.cjs:88: function entitledFromSubscription(sub) {
+netlify\functions\stripe-webhook.cjs:118: if (!sig) return { statusCode: 400, body: "Missing stripe-signature header" };
+netlify\functions\stripe-webhook.cjs:148: // Idempotency
+netlify\functions\stripe-webhook.cjs:153: // A) checkout.session.completed
+netlify\functions\stripe-webhook.cjs:156: if (stripeEvent.type === "checkout.session.completed") {
+netlify\functions\stripe-webhook.cjs:168: subscriptionId: session?.subscription || null,
+netlify\functions\stripe-webhook.cjs:177: // UI may show "processing" until subscription.updated arrives
+netlify\functions\stripe-webhook.cjs:178: entitlement: { pending: true, source: "checkout.session.completed" },
+netlify\functions\stripe-webhook.cjs:188: // B) customer.subscription.updated (AUTHORITATIVE)
+netlify\functions\stripe-webhook.cjs:190: if (stripeEvent.type === "customer.subscription.updated") {
+netlify\functions\stripe-webhook.cjs:194: const entitled = entitledFromSubscription(sub);
+netlify\functions\stripe-webhook.cjs:208: source: "customer.subscription.updated",
+netlify\functions\stripe-webhook.cjs:209: // if subscription is active again, clear grace
+netlify\functions\stripe-webhook.cjs:212: entitlement: { pending: false, source: "customer.subscription.updated", status, decidedAt: now() },
+netlify\functions\stripe-webhook.cjs:216: subscriptionId: sub?.id || prev?.stripe?.subscriptionId || null,
+netlify\functions\stripe-webhook.cjs:217: subscriptionStatus: status || null,
+netlify\functions\stripe-webhook.cjs:235: // C) customer.subscription.deleted (AUTHORITATIVE REVOKE)
+netlify\functions\stripe-webhook.cjs:237: if (stripeEvent.type === "customer.subscription.deleted") {
+netlify\functions\stripe-webhook.cjs:253: source: "customer.subscription.deleted",
+netlify\functions\stripe-webhook.cjs:256: entitlement: { pending: false, source: "customer.subscription.deleted", status: "canceled", decidedAt: now() },
+netlify\functions\stripe-webhook.cjs:260: subscriptionId: sub?.id || prev?.stripe?.subscriptionId || null,
+netlify\functions\stripe-webhook.cjs:261: subscriptionStatus: "canceled"
+netlify\functions\_shared\merchantSectorMap.cjs:46: if (/\bsubscription\b|\brecurring\b/.test(s)) return { sector: "Subscriptions" };
+
+=== ENTITLEMENTS ===
+src\App.jsx:57: // Live subscribe so flowAccess / flowConsent updates reflect immediately
+src\App.jsx:111: flowAccess: !!(userDoc && userDoc.flowAccess),
+src\components\AlignmentSnapshotDrip.jsx:17: * Tier logic:
+src\components\AlignmentSnapshotDrip.jsx:18: * - Tier 1: (Ticker is in Top 10 runners) AND (rolled-up sector is a Top 5 sector leader)
+src\components\AlignmentSnapshotDrip.jsx:19: * - Tier 2: Runner ticker only
+src\components\AlignmentSnapshotDrip.jsx:20: * - Tier 3: Sector leader only
+src\components\AlignmentSnapshotDrip.jsx:23: const [showTierRules, setShowTierRules] = useState(false);
+src\components\AlignmentSnapshotDrip.jsx:76: let tier = "—";
+src\components\AlignmentSnapshotDrip.jsx:78: let reason = "No Tier flag triggered (not in Top 5 sector leaders and not in Top 10 runners).";
+src\components\AlignmentSnapshotDrip.jsx:81: tier = "Tier 1";
+src\components\AlignmentSnapshotDrip.jsx:85: tier = "Tier 2";
+src\components\AlignmentSnapshotDrip.jsx:89: tier = "Tier 3";
+src\components\AlignmentSnapshotDrip.jsx:101: tier,
+src\components\AlignmentSnapshotDrip.jsx:132: <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Tier</th>
+src\components\AlignmentSnapshotDrip.jsx:158: <b>{r.tier}</b>
+src\components\AlignmentSnapshotDrip.jsx:169: onClick={() => setShowTierRules((v) => !v)}
+src\components\AlignmentSnapshotDrip.jsx:172: {showTierRules ? "Hide tier rules" : "Show tier rules"}
+src\components\AlignmentSnapshotDrip.jsx:175: {showTierRules ? (
+src\components\AlignmentSnapshotDrip.jsx:177: <b>Tier rules:</b>
+src\components\AlignmentSnapshotDrip.jsx:180: <b>Tier 1</b>: runner ticker + sector leader (market bucket)
+src\components\AlignmentSnapshotDrip.jsx:183: <b>Tier 2</b>: runner ticker only
+src\components\AlignmentSnapshotDrip.jsx:186: <b>Tier 3</b>: sector leader only
+src\components\AlignmentSnapshotDrip.jsx:189: <div style={{ marginTop: "0.35rem" }}>Tier flags are informational only — not recommendations.</div>
+src\components\MarketPulse.jsx:357: // IMPORTANT: cap to keep requests safe; degrade gracefully with partial results
+src\components\MarketPulse.jsx:478: // IMPORTANT: degrade gracefully
+src\components\MonthlyFlow.jsx:201: flowAccess
+src\components\MonthlyFlow.jsx:218: const hasAccess = !!flowAccess;
+src\components\MonthlyFlow.jsx:655: <SectionBand title="Monthly Flow (Paid • Preview)" open={openMonthly} onToggle={() => setOpenMonthly((v) => !v)} />
+src\components\MonthlyFlow.jsx:661: Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
+src\pages\Admin.jsx:214: flowAccess: !!nextValue,
+src\pages\Admin.jsx:216: // Explicit entitlement truth
+src\pages\Admin.jsx:217: entitlements: {
+src\pages\Admin.jsx:221: status: nextValue ? "paid" : "inactive",
+src\pages\Admin.jsx:222: graceUntil: null,
+src\pages\Admin.jsx:234: setErr(e?.message || "Could not update flowAccess.");
+src\pages\Admin.jsx:512: role: <b>{u.role || "user"}</b> · flowAccess: <b>{u.flowAccess ? "true" : "false"}</b>
+src\pages\Home.jsx:15: import { hasFlowAccess as computeHasFlowAccess } from "../utils/entitlements";
+src\pages\Home.jsx:195: * - Paid users: normal render
+src\pages\Home.jsx:196: * - Unpaid users: blur + overlay CTA
+src\pages\Home.jsx:229: Flow is a paid upgrade
+src\pages\Home.jsx:291: // ✅ SINGLE TRUTH: entitlements.flow.active ?? grace ?? legacy flowAccess (admin override)
+src\pages\Home.jsx:292: const hasFlowAccess = useMemo(() => computeHasFlowAccess(user, isAdmin), [user, isAdmin]);
+src\pages\Home.jsx:296: if (hasFlowAccess) setSimpleMode(false);
+src\pages\Home.jsx:297: }, [hasFlowAccess]);
+src\pages\Home.jsx:397: ...(hasFlowAccess || !simpleMode
+src\pages\Home.jsx:398: ? [{ value: "flow", label: "Flow", badge: hasFlowAccess ? "Paid" : "Preview" }]
+src\pages\Home.jsx:406: }, [hasFlowAccess, simpleMode, isAdmin]);
+src\pages\Home.jsx:485: {!hasFlowAccess && simpleMode && (
+src\pages\Home.jsx:511: {(hasFlowAccess || !simpleMode) && activeTab === "flow" && (
+src\pages\Home.jsx:512: <FlowGate hasAccess={hasFlowAccess} onUpgradeClick={handleUpgradeClick}>
+src\pages\Home.jsx:515: flowAccess={hasFlowAccess}
+src\pages\Home.jsx:534: flowAccess={hasFlowAccess}
+src\pages\Home.jsx:566: flowAccess={hasFlowAccess}
+src\utils\entitlements.js:1: // FILE: src/utils/entitlements.js
+src\utils\entitlements.js:20: * 2) If entitlements.flow.active is boolean, use it.
+src\utils\entitlements.js:21: * 3) If status is "past_due" and graceUntil is in the future, allow access.
+src\utils\entitlements.js:22: * 4) Otherwise fallback to legacy flowAccess boolean.
+src\utils\entitlements.js:24: export function hasFlowAccess(userDoc, isAdmin = false) {
+src\utils\entitlements.js:28: const ent = u.entitlements?.flow || null;
+src\utils\entitlements.js:34: // If explicitly false, still allow grace if configured as past_due w/ graceUntil
+src\utils\entitlements.js:37: const graceUntilMs = tsToMillis(ent.graceUntil);
+src\utils\entitlements.js:38: if (graceUntilMs && graceUntilMs > Date.now()) return true;
+src\utils\entitlements.js:43: // 3) no explicit active, but past_due+graceUntil still can allow
+src\utils\entitlements.js:47: const graceUntilMs = tsToMillis(ent.graceUntil);
+src\utils\entitlements.js:48: if (graceUntilMs && graceUntilMs > Date.now()) return true;
+src\utils\entitlements.js:53: return !!u.flowAccess;
+src\utils\merchantSectorMap.js:43: * - ticker is best-effort only (Alignment tier-2 + runners overlap)
+src\utils\userDoc.js:12: * - flowAccess (legacy UI gate; keep for compatibility)
+src\utils\userDoc.js:13: * - entitlements.flow (new explicit truth)
+src\utils\userDoc.js:38: flowAccess: false,
+src\utils\userDoc.js:40: // Explicit entitlement truth (used by webhook/admin; safer long-term)
+src\utils\userDoc.js:41: entitlements: {
+src\utils\userDoc.js:45: status: "inactive",  // "paid" | "past_due" | "inactive" | "canceled"
+src\utils\userDoc.js:46: graceUntil: null,
+netlify\functions\community-flow.cjs:145: .where("flowAccess", "==", true)
+netlify\functions\community-flow.cjs:207: const flowAccess = !!(caller.data() || {}).flowAccess;
+netlify\functions\community-flow.cjs:208: if (!flowAccess) return jsonResponse(403, { error: "Flow access required" });
+netlify\functions\market-refresh.cjs:367: // Write successful docs (degrades gracefully)
+netlify\functions\rebuild-flow-window.cjs:7: // - Flow includes ALL tx across the database in the window (no flowAccess gating).
+netlify\functions\stripe-webhook.cjs:2: // Stripe webhook -> server-truth entitlement writes.
+netlify\functions\stripe-webhook.cjs:4: // - Entitlement truth lives in users/{uid}.entitlements.flow (and legacy users/{uid}.flowAccess kept in sync)
+netlify\functions\stripe-webhook.cjs:86: // Entitlement policy
+netlify\functions\stripe-webhook.cjs:91: // everything else not entitled (invoice events can apply grace)
+netlify\functions\stripe-webhook.cjs:95: // Writes one consistent entitlement shape
+netlify\functions\stripe-webhook.cjs:96: function entitlementPatch({ active, status, source, graceUntil = null }) {
+netlify\functions\stripe-webhook.cjs:98: entitlements: {
+netlify\functions\stripe-webhook.cjs:103: graceUntil: graceUntil || null,
+netlify\functions\stripe-webhook.cjs:108: flowAccess: !!active,
+netlify\functions\stripe-webhook.cjs:154: // Store stripe IDs only; do NOT grant entitlement here.
+netlify\functions\stripe-webhook.cjs:178: entitlement: { pending: true, source: "checkout.session.completed" },
+netlify\functions\stripe-webhook.cjs:205: ...entitlementPatch({
+netlify\functions\stripe-webhook.cjs:209: // if subscription is active again, clear grace
+netlify\functions\stripe-webhook.cjs:210: graceUntil: entitled ? null : (prev?.entitlements?.flow?.graceUntil || null)
+netlify\functions\stripe-webhook.cjs:212: entitlement: { pending: false, source: "customer.subscription.updated", status, decidedAt: now() },
+netlify\functions\stripe-webhook.cjs:250: ...entitlementPatch({
+netlify\functions\stripe-webhook.cjs:254: graceUntil: null
+netlify\functions\stripe-webhook.cjs:256: entitlement: { pending: false, source: "customer.subscription.deleted", status: "canceled", decidedAt: now() },
+netlify\functions\stripe-webhook.cjs:273: // D) invoice.payment_failed (GRACE, do not hard revoke)
+netlify\functions\stripe-webhook.cjs:282: const GRACE_DAYS = Number(process.env.STRIPE_GRACE_DAYS || 7);
+netlify\functions\stripe-webhook.cjs:283: const graceUntil = plusDaysTimestamp(GRACE_DAYS);
+netlify\functions\stripe-webhook.cjs:291: // Keep access during grace
+netlify\functions\stripe-webhook.cjs:292: ...entitlementPatch({
+netlify\functions\stripe-webhook.cjs:296: graceUntil
+netlify\functions\stripe-webhook.cjs:307: graceUntil,
+netlify\functions\stripe-webhook.cjs:320: // E) invoice.payment_succeeded (CLEAR past_due/grace)
+netlify\functions\stripe-webhook.cjs:335: ...entitlementPatch({
+netlify\functions\stripe-webhook.cjs:337: status: "paid",
+netlify\functions\stripe-webhook.cjs:339: graceUntil: null
+netlify\functions\stripe-webhook.cjs:345: lastInvoiceStatus: inv?.status || "paid"
+netlify\functions\stripe-webhook.cjs:350: graceUntil: null,
+netlify\functions\stripe-webhook.cjs:351: lastPaidInvoiceId: inv?.id || null,
+netlify\functions\stripe-webhook.cjs:352: lastPaidAt: now()
+
+=== ERROR_BOUNDARY_RETRY ===
+src\components\ErrorBoundary.jsx:1: // FILE: src/components/ErrorBoundary.jsx
+src\components\ErrorBoundary.jsx:5: export default class ErrorBoundary extends React.Component {
+src\components\ErrorBoundary.jsx:15: componentDidCatch(error, info) {
+src\components\ErrorBoundary.jsx:24: console.error("ErrorBoundary onError hook failed:", e);
+src\components\ErrorBoundary.jsx:28: retry = () => {
+src\components\ErrorBoundary.jsx:43: // key forces remount after Retry
+src\components\ErrorBoundary.jsx:63: Sphere hit an unexpected issue. You can retry, or reload if it keeps happening.
+src\components\ErrorBoundary.jsx:72: onClick={this.retry}
+src\components\ErrorBoundary.jsx:82: Retry
+src\components\MarketPulse.jsx:178: * - Vite dev (5173/5174) where relative path returns index.html (HTML) -> retry 8888
+src\main.jsx:5: import ErrorBoundary from "./components/ErrorBoundary.jsx";
+src\main.jsx:22: <ErrorBoundary onError={logReactBoundary}>
+src\main.jsx:24: </ErrorBoundary>
+src\utils\fetchJsonSafe.js:9: retryDelayMs = 600,
+src\utils\fetchJsonSafe.js:46: const retryable = isAbort || isNetwork || attempt < retries;
+src\utils\fetchJsonSafe.js:48: if (attempt < retries && retryable) {
+src\utils\fetchJsonSafe.js:49: await sleep(retryDelayMs * (attempt + 1));
+src\utils\runnerEngine.js:5: // - Works on Vite dev ports (5173/5174...) by retrying localhost:8888
+src\utils\runnerEngine.js:16: * - Vite dev (5173/5174) where relative path returns index.html (HTML) -> retry 8888
+netlify\functions\market.cjs:5: // (no client secrets, no user steps), then retry the read once.
+netlify\functions\market.cjs:247: // Avoid infinite retries: only retry if we actually attempted a warm.
+
+=== ONBOARDING_RETENTION ===
+src\App.jsx:12: import { ensureUserStats, bumpSession } from "./utils/userStats";
+src\App.jsx:53: // NEW: ensure userStats exists + count a session
+src\App.jsx:54: await ensureUserStats(currentUser.uid);
+src\components\MonthlyFlow.jsx:9: import { markFirstFlowView } from "../utils/userStats";
+src\components\MonthlyFlow.jsx:220: // ✅ NEW: mark first Flow view (unlock milestone)
+src\components\UnlockPanel.jsx:5: const m = stats?.milestones || {};
+src\hooks\useUserStats.js:1: // FILE: src/hooks/useUserStats.js
+src\hooks\useUserStats.js:5: import { ensureUserStats } from "../utils/userStats";
+src\hooks\useUserStats.js:7: export function useUserStats(uid) {
+src\hooks\useUserStats.js:23: await ensureUserStats(uid);
+src\hooks\useUserStats.js:25: const ref = doc(db, "userStats", uid);
+src\hooks\useUserStats.js:50: const m = s.milestones || {};
+src\utils\userDoc.js:16: * - onboardingComplete
+src\utils\userDoc.js:55: onboardingComplete: false
+src\utils\userStats.js:1: // FILE: src/utils/userStats.js
+src\utils\userStats.js:5: export async function ensureUserStats(uid) {
+src\utils\userStats.js:7: const ref = doc(db, "userStats", uid);
+src\utils\userStats.js:19: streak: 0,
+src\utils\userStats.js:20: milestones: {
+src\utils\userStats.js:32: const ref = doc(db, "userStats", uid);
+src\utils\userStats.js:41: const ref = doc(db, "userStats", uid);
+src\utils\userStats.js:44: "milestones.firstUpload": true,
+src\utils\userStats.js:51: const ref = doc(db, "userStats", uid);
+src\utils\userStats.js:53: "milestones.firstFlowView": true,
+
+=== SECURITY_RULES_HINTS ===
+src\components\MonthlyFlow.jsx:169: return `Load the admin community feed to generate Flow’s pulse. Once we have it, we’ll show leaders + runners for ${windowLabel({
+src\components\MonthlyFlow.jsx:661: Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
+src\components\MonthlyFlow.jsx:945: Signal + count come from the admin community feed. Sector leader proxy comes from ETF leaders (market function).
+src\components\SphericalFeed.jsx:16: const ADMIN_POST_ALLOWLIST = ["birl.mar10@gmail.com"]; // ✅ you
+src\components\SphericalFeed.jsx:24: function isAdminEmail(email) {
+src\components\SphericalFeed.jsx:26: return ADMIN_POST_ALLOWLIST.map(normalizeEmail).includes(e);
+src\components\SphericalFeed.jsx:115: *    - Admin -> posts
+src\components\SphericalFeed.jsx:116: *    - Non-admin -> posts_pending
+src\components\SphericalFeed.jsx:119: * - Client triggers generation, but SERVER writes the pending post (Admin SDK)
+src\components\SphericalFeed.jsx:120: * - So Ripple behaves like a normal user (pending -> admin approve -> live)
+src\components\SphericalFeed.jsx:123: const isAdmin = useMemo(() => isAdminEmail(userEmail), [userEmail]);
+src\components\SphericalFeed.jsx:209: // Non-admin -> pending queue
+src\components\SphericalFeed.jsx:210: const targetCollection = isAdmin ? "posts" : "posts_pending";
+src\components\SphericalFeed.jsx:218: status: isAdmin ? "published" : "pending"
+src\components\SphericalFeed.jsx:224: if (isAdmin) await loadInitial();
+src\components\SphericalFeed.jsx:228: setError(e?.message || "Couldn’t submit the post. (Most common: Firestore rules don’t allow writes yet.)");
+src\components\SphericalFeed.jsx:235: // You can choose to allow only admin to TRIGGER the bot (safe default),
+src\components\SphericalFeed.jsx:237: if (!isAdmin) return;
+src\components\SphericalFeed.jsx:314: if (!isAdmin) return;
+src\components\SphericalFeed.jsx:375: alert("Ripple post created. Approve it in Admin → Posts Pending.");
+src\components\SphericalFeed.jsx:397: }, [isAdmin, botContext]);
+src\components\SphericalFeed.jsx:430: {/* Right: Status + Admin Ripple Controls */}
+src\components\SphericalFeed.jsx:440: {isAdmin ? <Badge tone="info">Admin</Badge> : null}
+src\components\SphericalFeed.jsx:442: {isAdmin && (
+src\components\SphericalFeed.jsx:500: {isAdmin ? <Badge tone="info">Admin</Badge> : <Badge tone="neutral">Member</Badge>}
+src\components\SphericalFeed.jsx:573: {posting ? "Posting…" : isAdmin ? "Post (Live)" : "Post (Review)"}
+src\pages\Admin.jsx:1: // FILE: src/pages/Admin.jsx
+src\pages\Admin.jsx:58: async function getAdminTokenOrThrow() {
+src\pages\Admin.jsx:89: export default function Admin() {
+src\pages\Admin.jsx:130: // Upload batch list via admin function (avoids collectionGroup/index headaches)
+src\pages\Admin.jsx:132: const token = await getAdminTokenOrThrow();
+src\pages\Admin.jsx:134: const res = await fetch("/.netlify/functions/admin-list-uploads?limit=50", {
+src\pages\Admin.jsx:158: const token = await getAdminTokenOrThrow();
+src\pages\Admin.jsx:159: const res = await fetch("/.netlify/functions/admin-list-merchant-rules?limit=500", {
+src\pages\Admin.jsx:177: console.error("Admin refresh error:", e);
+src\pages\Admin.jsx:178: setErr(e?.message || "Failed to load admin data.");
+src\pages\Admin.jsx:220: source: "admin",
+src\pages\Admin.jsx:296: // Soft-delete upload batch (adminStatus = deleted)
+src\pages\Admin.jsx:298: const reason = prompt("Why remove this upload? (optional)") || "Admin removed";
+src\pages\Admin.jsx:302: const token = await getAdminTokenOrThrow();
+src\pages\Admin.jsx:303: const res = await fetch("/.netlify/functions/admin-delete-upload", {
+src\pages\Admin.jsx:326: const token = await getAdminTokenOrThrow();
+src\pages\Admin.jsx:327: const res = await fetch("/.netlify/functions/admin-upsert-merchant-rule", {
+src\pages\Admin.jsx:352: const token = await getAdminTokenOrThrow();
+src\pages\Admin.jsx:353: const res = await fetch("/.netlify/functions/admin-delete-merchant-rule", {
+src\pages\Admin.jsx:672: {u.adminStatus ? (
+src\pages\Admin.jsx:674: {" · "}adminStatus: <b>{u.adminStatus}</b>
+src\pages\Admin.jsx:679: {u.adminStatus === "deleted" ? (
+src\pages\Admin.jsx:681: <b>Removed:</b> {u.adminDeleteReason || "—"}{" "}
+src\pages\Admin.jsx:682: <span style={{ opacity: 0.75 }}>({formatWhen(u.adminDeletedAt)})</span>
+src\pages\Home.jsx:12: import Admin from "./Admin";
+src\pages\Home.jsx:264: // ✅ Admin = user has a Firestore doc at admins/{uid}
+src\pages\Home.jsx:265: const [isAdmin, setIsAdmin] = useState(false);
+src\pages\Home.jsx:270: async function checkAdmin() {
+src\pages\Home.jsx:273: if (alive) setIsAdmin(false);
+src\pages\Home.jsx:276: const adminRef = doc(db, "admins", user.uid);
+src\pages\Home.jsx:277: const snap = await getDoc(adminRef);
+src\pages\Home.jsx:278: if (alive) setIsAdmin(snap.exists());
+src\pages\Home.jsx:280: console.error("checkAdmin error:", e);
+src\pages\Home.jsx:281: if (alive) setIsAdmin(false);
+src\pages\Home.jsx:285: checkAdmin();
+src\pages\Home.jsx:291: // ✅ SINGLE TRUTH: entitlements.flow.active ?? grace ?? legacy flowAccess (admin override)
+src\pages\Home.jsx:292: const hasFlowAccess = useMemo(() => computeHasFlowAccess(user, isAdmin), [user, isAdmin]);
+src\pages\Home.jsx:404: if (isAdmin) base.push({ value: "admin", label: "Admin" });
+src\pages\Home.jsx:406: }, [hasFlowAccess, simpleMode, isAdmin]);
+src\pages\Home.jsx:605: {/* ADMIN */}
+src\pages\Home.jsx:606: {activeTab === "admin" && isAdmin && (
+src\pages\Home.jsx:607: <Section label="Admin Panel" storageKey="home:admin" defaultOpen={true}>
+src\pages\Home.jsx:608: <Admin />
+src\utils\entitlements.js:19: * 1) Admin always has access.
+src\utils\entitlements.js:24: export function hasFlowAccess(userDoc, isAdmin = false) {
+src\utils\entitlements.js:25: if (isAdmin) return true;
+src\utils\userDoc.js:40: // Explicit entitlement truth (used by webhook/admin; safer long-term)
+src\utils\userDoc.js:44: source: "none",      // "stripe" | "admin" | "none"
+netlify\functions\admin-activate-upload.cjs:1: // FILE: netlify/functions/admin-activate-upload.cjs
+netlify\functions\admin-activate-upload.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-activate-upload.cjs:4: function initAdmin() {
+netlify\functions\admin-activate-upload.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-activate-upload.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-activate-upload.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-activate-upload.cjs:15: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-activate-upload.cjs:17: initAdmin();
+netlify\functions\admin-activate-upload.cjs:19: const db = admin.firestore();
+netlify\functions\admin-activate-upload.cjs:20: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\admin-activate-upload.cjs:30: async function requireAdmin(event) {
+netlify\functions\admin-activate-upload.cjs:39: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-activate-upload.cjs:47: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-activate-upload.cjs:49: const err = new Error("Admin only");
+netlify\functions\admin-activate-upload.cjs:61: const adminUid = await requireAdmin(event);
+netlify\functions\admin-activate-upload.cjs:79: activatedBy: adminUid,
+netlify\functions\admin-activate-upload.cjs:82: adminStatus: "active",
+netlify\functions\admin-delete-merchant-rule.cjs:1: // FILE: netlify/functions/admin-delete-merchant-rule.cjs
+netlify\functions\admin-delete-merchant-rule.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-delete-merchant-rule.cjs:4: function initAdmin() {
+netlify\functions\admin-delete-merchant-rule.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-delete-merchant-rule.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-delete-merchant-rule.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-delete-merchant-rule.cjs:14: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\admin-delete-merchant-rule.cjs:21: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-delete-merchant-rule.cjs:23: initAdmin();
+netlify\functions\admin-delete-merchant-rule.cjs:25: const db = admin.firestore();
+netlify\functions\admin-delete-merchant-rule.cjs:35: async function requireAdmin(event) {
+netlify\functions\admin-delete-merchant-rule.cjs:44: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-delete-merchant-rule.cjs:52: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-delete-merchant-rule.cjs:54: const err = new Error("Admin only");
+netlify\functions\admin-delete-merchant-rule.cjs:66: await requireAdmin(event);
+netlify\functions\admin-delete-upload.cjs:1: // FILE: netlify/functions/admin-delete-upload.cjs
+netlify\functions\admin-delete-upload.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-delete-upload.cjs:4: function initAdmin() {
+netlify\functions\admin-delete-upload.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-delete-upload.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-delete-upload.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-delete-upload.cjs:15: admin.initializeApp({
+netlify\functions\admin-delete-upload.cjs:16: credential: admin.credential.cert(svc)
+netlify\functions\admin-delete-upload.cjs:19: initAdmin();
+netlify\functions\admin-delete-upload.cjs:21: const db = admin.firestore();
+netlify\functions\admin-delete-upload.cjs:22: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\admin-delete-upload.cjs:24: async function requireAdmin(event) {
+netlify\functions\admin-delete-upload.cjs:28: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-delete-upload.cjs:32: const adminDoc = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-delete-upload.cjs:33: if (!adminDoc.exists) throw new Error("Not an admin");
+netlify\functions\admin-delete-upload.cjs:45: const adminUid = await requireAdmin(event);
+netlify\functions\admin-delete-upload.cjs:49: const reason = String(body.reason || "Admin removed").trim();
+netlify\functions\admin-delete-upload.cjs:58: adminStatus: "deleted",
+netlify\functions\admin-delete-upload.cjs:59: adminDeletedAt: nowTS(),
+netlify\functions\admin-delete-upload.cjs:60: adminDeletedBy: adminUid,
+netlify\functions\admin-delete-upload.cjs:61: adminDeleteReason: reason,
+netlify\functions\admin-delete-upload.cjs:67: // Mirror into global index doc (used by admin-list-uploads)
+netlify\functions\admin-delete-upload.cjs:73: adminStatus: "deleted",
+netlify\functions\admin-delete-upload.cjs:74: adminDeletedAt: nowTS(),
+netlify\functions\admin-delete-upload.cjs:75: adminDeletedBy: adminUid,
+netlify\functions\admin-delete-upload.cjs:76: adminDeleteReason: reason,
+netlify\functions\admin-delete-upload.cjs:84: console.error("admin-delete-upload error:", e);
+netlify\functions\admin-list-merchant-rules.cjs:1: // FILE: netlify/functions/admin-list-merchant-rules.cjs
+netlify\functions\admin-list-merchant-rules.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-list-merchant-rules.cjs:4: function initAdmin() {
+netlify\functions\admin-list-merchant-rules.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-list-merchant-rules.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-list-merchant-rules.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-list-merchant-rules.cjs:14: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\admin-list-merchant-rules.cjs:21: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-list-merchant-rules.cjs:23: initAdmin();
+netlify\functions\admin-list-merchant-rules.cjs:25: const db = admin.firestore();
+netlify\functions\admin-list-merchant-rules.cjs:35: async function requireAdmin(event) {
+netlify\functions\admin-list-merchant-rules.cjs:44: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-list-merchant-rules.cjs:52: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-list-merchant-rules.cjs:54: const err = new Error("Admin only");
+netlify\functions\admin-list-merchant-rules.cjs:71: await requireAdmin(event);
+netlify\functions\admin-list-uploads.cjs:1: // FILE: netlify/functions/admin-list-uploads.cjs
+netlify\functions\admin-list-uploads.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-list-uploads.cjs:4: function initAdmin() {
+netlify\functions\admin-list-uploads.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-list-uploads.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-list-uploads.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-list-uploads.cjs:14: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\admin-list-uploads.cjs:21: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-list-uploads.cjs:23: initAdmin();
+netlify\functions\admin-list-uploads.cjs:25: const db = admin.firestore();
+netlify\functions\admin-list-uploads.cjs:38: async function requireAdmin(event) {
+netlify\functions\admin-list-uploads.cjs:47: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-list-uploads.cjs:55: // Admin scheme: admins/{uid} exists
+netlify\functions\admin-list-uploads.cjs:56: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-list-uploads.cjs:58: const err = new Error("Admin only");
+netlify\functions\admin-list-uploads.cjs:86: await requireAdmin(event);
+netlify\functions\admin-list-uploads.cjs:127: adminStatus: data?.adminStatus || null,
+netlify\functions\admin-list-uploads.cjs:128: adminDeletedAt: data?.adminDeletedAt || null,
+netlify\functions\admin-list-uploads.cjs:129: adminDeletedBy: data?.adminDeletedBy || null,
+netlify\functions\admin-list-uploads.cjs:130: adminDeleteReason: data?.adminDeleteReason || null,
+netlify\functions\admin-review-upload.cjs:1: // FILE: netlify/functions/admin-review-upload.cjs
+netlify\functions\admin-review-upload.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-review-upload.cjs:4: function initAdmin() {
+netlify\functions\admin-review-upload.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-review-upload.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-review-upload.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-review-upload.cjs:15: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-review-upload.cjs:17: initAdmin();
+netlify\functions\admin-review-upload.cjs:19: const db = admin.firestore();
+netlify\functions\admin-review-upload.cjs:20: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\admin-review-upload.cjs:30: async function requireAdmin(event) {
+netlify\functions\admin-review-upload.cjs:39: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-review-upload.cjs:47: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-review-upload.cjs:49: const err = new Error("Admin only");
+netlify\functions\admin-review-upload.cjs:61: const adminUid = await requireAdmin(event);
+netlify\functions\admin-review-upload.cjs:75: adminStatus: "reviewed",
+netlify\functions\admin-review-upload.cjs:76: adminReviewedAt: nowTS(),
+netlify\functions\admin-review-upload.cjs:77: adminReviewedBy: adminUid,
+netlify\functions\admin-review-upload.cjs:78: adminReviewNote: note || null,
+netlify\functions\admin-review-upload.cjs:84: reviewedBy: adminUid,
+netlify\functions\admin-unflag-upload.cjs:1: // FILE: netlify/functions/admin-unflag-upload.cjs
+netlify\functions\admin-unflag-upload.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-unflag-upload.cjs:4: function initAdmin() {
+netlify\functions\admin-unflag-upload.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-unflag-upload.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-unflag-upload.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-unflag-upload.cjs:15: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-unflag-upload.cjs:17: initAdmin();
+netlify\functions\admin-unflag-upload.cjs:19: const db = admin.firestore();
+netlify\functions\admin-unflag-upload.cjs:20: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\admin-unflag-upload.cjs:30: async function requireAdmin(event) {
+netlify\functions\admin-unflag-upload.cjs:39: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-unflag-upload.cjs:47: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-unflag-upload.cjs:49: const err = new Error("Admin only");
+netlify\functions\admin-unflag-upload.cjs:61: const adminUid = await requireAdmin(event);
+netlify\functions\admin-unflag-upload.cjs:78: unflaggedBy: adminUid,
+netlify\functions\admin-upsert-merchant-rule.cjs:1: // FILE: netlify/functions/admin-upsert-merchant-rule.cjs
+netlify\functions\admin-upsert-merchant-rule.cjs:2: const admin = require("firebase-admin");
+netlify\functions\admin-upsert-merchant-rule.cjs:4: function initAdmin() {
+netlify\functions\admin-upsert-merchant-rule.cjs:5: if (admin.apps.length) return;
+netlify\functions\admin-upsert-merchant-rule.cjs:7: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\admin-upsert-merchant-rule.cjs:8: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\admin-upsert-merchant-rule.cjs:14: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\admin-upsert-merchant-rule.cjs:21: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\admin-upsert-merchant-rule.cjs:23: initAdmin();
+netlify\functions\admin-upsert-merchant-rule.cjs:25: const db = admin.firestore();
+netlify\functions\admin-upsert-merchant-rule.cjs:26: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\admin-upsert-merchant-rule.cjs:36: async function requireAdmin(event) {
+netlify\functions\admin-upsert-merchant-rule.cjs:45: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\admin-upsert-merchant-rule.cjs:53: const a = await db.collection("admins").doc(uid).get();
+netlify\functions\admin-upsert-merchant-rule.cjs:55: const err = new Error("Admin only");
+netlify\functions\admin-upsert-merchant-rule.cjs:76: const adminUid = await requireAdmin(event);
+netlify\functions\admin-upsert-merchant-rule.cjs:104: ...(isCreate ? { createdAt: nowTS(), createdBy: adminUid } : {}),
+netlify\functions\admin-upsert-merchant-rule.cjs:106: updatedBy: adminUid
+netlify\functions\client-log.js:2: import admin from "firebase-admin";
+netlify\functions\client-log.js:18: // Firebase Admin init
+netlify\functions\client-log.js:19: if (!admin.apps.length) {
+netlify\functions\client-log.js:20: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\client-log.js:21: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var.");
+netlify\functions\client-log.js:27: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON.");
+netlify\functions\client-log.js:34: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\client-log.js:37: const db = admin.firestore();
+netlify\functions\client-log.js:44: const decoded = await admin.auth().verifyIdToken(m[1]);
+netlify\functions\client-log.js:106: createdAt: admin.firestore.FieldValue.serverTimestamp()
+netlify\functions\community-flow.cjs:9: // IMPORTANT: respects admin deletions:
+netlify\functions\community-flow.cjs:10: //   if (b.adminStatus === "deleted") continue;
+netlify\functions\community-flow.cjs:12: const admin = require("firebase-admin");
+netlify\functions\community-flow.cjs:14: function initAdmin() {
+netlify\functions\community-flow.cjs:15: if (admin.apps.length) return;
+netlify\functions\community-flow.cjs:17: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\community-flow.cjs:18: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\community-flow.cjs:25: admin.initializeApp({
+netlify\functions\community-flow.cjs:26: credential: admin.credential.cert(svc)
+netlify\functions\community-flow.cjs:29: initAdmin();
+netlify\functions\community-flow.cjs:31: const db = admin.firestore();
+netlify\functions\community-flow.cjs:107: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\community-flow.cjs:232: // Respect admin deletions
+netlify\functions\community-flow.cjs:233: if (b.adminStatus === "deleted") return null;
+netlify\functions\ingest-upload.cjs:2: const admin = require("firebase-admin");
+netlify\functions\ingest-upload.cjs:5: function initAdmin() {
+netlify\functions\ingest-upload.cjs:6: if (admin.apps.length) return;
+netlify\functions\ingest-upload.cjs:8: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\ingest-upload.cjs:9: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\ingest-upload.cjs:18: admin.initializeApp({
+netlify\functions\ingest-upload.cjs:19: credential: admin.credential.cert(svc)
+netlify\functions\ingest-upload.cjs:22: initAdmin();
+netlify\functions\ingest-upload.cjs:24: const db = admin.firestore();
+netlify\functions\ingest-upload.cjs:25: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\ingest-upload.cjs:26: const inc = (n) => admin.firestore.FieldValue.increment(n);
+netlify\functions\ingest-upload.cjs:233: const decoded = await admin.auth().verifyIdToken(token);
+netlify\functions\ingest-upload.cjs:553: // Rollups for Admin UI
+netlify\functions\ingest-upload.cjs:664: adminStatus: "deleted",
+netlify\functions\ingest-upload.cjs:714: // downstream reads (Flow rebuild, Drip loaders) should treat adminStatus:"deleted" as excluded.
+netlify\functions\ingest-upload.cjs:715: adminStatus: "active",
+netlify\functions\market-refresh.cjs:8: // - Option A: Admin Bearer token (users/{uid}.role === "admin")
+netlify\functions\market-refresh.cjs:13: // Example (admin token):
+netlify\functions\market-refresh.cjs:20: const admin = require("firebase-admin");
+netlify\functions\market-refresh.cjs:33: // Admin init
+netlify\functions\market-refresh.cjs:35: function initAdmin() {
+netlify\functions\market-refresh.cjs:36: if (admin.apps.length) return;
+netlify\functions\market-refresh.cjs:38: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\market-refresh.cjs:39: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\market-refresh.cjs:46: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON (must be full service account JSON)");
+netlify\functions\market-refresh.cjs:54: admin.initializeApp({
+netlify\functions\market-refresh.cjs:55: credential: admin.credential.cert(svc)
+netlify\functions\market-refresh.cjs:58: initAdmin();
+netlify\functions\market-refresh.cjs:60: const db = admin.firestore();
+netlify\functions\market-refresh.cjs:61: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\market-refresh.cjs:63: const ADMIN_PROJECT_ID =
+netlify\functions\market-refresh.cjs:64: admin.app().options?.projectId ||
+netlify\functions\market-refresh.cjs:65: admin.app().options?.credential?.projectId ||
+netlify\functions\market-refresh.cjs:235: async function requireAdminOrSecret(event) {
+netlify\functions\market-refresh.cjs:243: // Admin token path
+netlify\functions\market-refresh.cjs:248: const decoded = await admin.auth().verifyIdToken(m[1].trim());
+netlify\functions\market-refresh.cjs:254: if (role !== "admin") throw new Error("Admin only");
+netlify\functions\market-refresh.cjs:256: return { via: "admin", uid };
+netlify\functions\market-refresh.cjs:269: await requireAdminOrSecret(event);
+netlify\functions\market-refresh.cjs:408: adminProjectId: ADMIN_PROJECT_ID,
+netlify\functions\market.cjs:14: const admin = require("firebase-admin");
+netlify\functions\market.cjs:25: function initAdmin() {
+netlify\functions\market.cjs:26: if (admin.apps.length) return;
+netlify\functions\market.cjs:28: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\market.cjs:29: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\market.cjs:35: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\market.cjs:42: admin.initializeApp({
+netlify\functions\market.cjs:43: credential: admin.credential.cert(svc)
+netlify\functions\market.cjs:46: initAdmin();
+netlify\functions\market.cjs:48: const db = admin.firestore();
+netlify\functions\public-merchant-rules.cjs:2: const admin = require("firebase-admin");
+netlify\functions\public-merchant-rules.cjs:4: function initAdmin() {
+netlify\functions\public-merchant-rules.cjs:5: if (admin.apps.length) return;
+netlify\functions\public-merchant-rules.cjs:6: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\public-merchant-rules.cjs:7: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\public-merchant-rules.cjs:10: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\public-merchant-rules.cjs:12: initAdmin();
+netlify\functions\public-merchant-rules.cjs:14: const db = admin.firestore();
+netlify\functions\rebuild-flow-window.cjs:4: // Admin-only endpoint to rebuild Flow aggregates/signals for a given window.
+netlify\functions\rebuild-flow-window.cjs:8: // - Still respects admin deletions: if a batch is deleted, its tx do not count.
+netlify\functions\rebuild-flow-window.cjs:21: const admin = require("firebase-admin");
+netlify\functions\rebuild-flow-window.cjs:23: function initAdmin() {
+netlify\functions\rebuild-flow-window.cjs:24: if (admin.apps.length) return;
+netlify\functions\rebuild-flow-window.cjs:26: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\rebuild-flow-window.cjs:27: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\rebuild-flow-window.cjs:33: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON");
+netlify\functions\rebuild-flow-window.cjs:41: admin.initializeApp({
+netlify\functions\rebuild-flow-window.cjs:42: credential: admin.credential.cert(svc)
+netlify\functions\rebuild-flow-window.cjs:45: initAdmin();
+netlify\functions\rebuild-flow-window.cjs:47: const db = admin.firestore();
+netlify\functions\rebuild-flow-window.cjs:132: // Admin auth: requires admins/{uid} exists
+netlify\functions\rebuild-flow-window.cjs:133: async function requireAdmin(event) {
+netlify\functions\rebuild-flow-window.cjs:138: const decoded = await admin.auth().verifyIdToken(token);
+netlify\functions\rebuild-flow-window.cjs:142: const snap = await db.collection("admins").doc(uid).get();
+netlify\functions\rebuild-flow-window.cjs:143: if (!snap.exists) throw new Error("Not admin");
+netlify\functions\rebuild-flow-window.cjs:191: return data.adminStatus || "active";
+netlify\functions\rebuild-flow-window.cjs:302: await requireAdmin(event);
+netlify\functions\rebuild-flow-window.cjs:325: const now = admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\spherical-ai.cjs:15: /** --------- Firebase Admin SDK (server only) --------- */
+netlify\functions\spherical-ai.cjs:16: let _admin = null;
+netlify\functions\spherical-ai.cjs:19: function getAdminDbOrThrow() {
+netlify\functions\spherical-ai.cjs:22: // ✅ Support either env var name (you've used FIREBASE_ADMIN_SERVICE_ACCOUNT locally)
+netlify\functions\spherical-ai.cjs:23: const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\spherical-ai.cjs:24: if (!raw) throw new Error("Missing FIREBASE_SERVICE_ACCOUNT (or FIREBASE_ADMIN_SERVICE_ACCOUNT) env var");
+netlify\functions\spherical-ai.cjs:35: const admin = require("firebase-admin");
+netlify\functions\spherical-ai.cjs:37: if (!admin.apps.length) {
+netlify\functions\spherical-ai.cjs:38: admin.initializeApp({
+netlify\functions\spherical-ai.cjs:39: credential: admin.credential.cert(svc)
+netlify\functions\spherical-ai.cjs:43: _admin = admin;
+netlify\functions\spherical-ai.cjs:44: _db = admin.firestore();
+netlify\functions\spherical-ai.cjs:93: // ✅ NEW: optional admin-provided steering text for a manual push
+netlify\functions\spherical-ai.cjs:106: ? `Admin angle (optional): ${String(angle).trim()}`
+netlify\functions\spherical-ai.cjs:153: // ---- create pending post as Ripple (Admin SDK) ----
+netlify\functions\spherical-ai.cjs:154: const db = getAdminDbOrThrow();
+netlify\functions\spherical-ai.cjs:170: createdAt: _admin.firestore.FieldValue.serverTimestamp(),
+netlify\functions\stripe-webhook.cjs:8: const admin = require("firebase-admin");
+netlify\functions\stripe-webhook.cjs:13: // Firebase Admin init
+netlify\functions\stripe-webhook.cjs:15: function initAdmin() {
+netlify\functions\stripe-webhook.cjs:16: if (admin.apps.length) return;
+netlify\functions\stripe-webhook.cjs:18: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\stripe-webhook.cjs:19: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var (service account JSON).");
+netlify\functions\stripe-webhook.cjs:25: throw new Error("FIREBASE_ADMIN_SERVICE_ACCOUNT is not valid JSON.");
+netlify\functions\stripe-webhook.cjs:33: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\stripe-webhook.cjs:35: initAdmin();
+netlify\functions\stripe-webhook.cjs:37: const db = admin.firestore();
+netlify\functions\stripe-webhook.cjs:38: const now = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\stripe-webhook.cjs:42: return admin.firestore.Timestamp.fromMillis(ms);
+netlify\functions\whoami.cjs:2: const admin = require("firebase-admin");
+netlify\functions\whoami.cjs:4: function initAdmin() {
+netlify\functions\whoami.cjs:5: if (admin.apps.length) return;
+netlify\functions\whoami.cjs:6: const raw = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
+netlify\functions\whoami.cjs:7: if (!raw) throw new Error("Missing FIREBASE_ADMIN_SERVICE_ACCOUNT env var");
+netlify\functions\whoami.cjs:12: admin.initializeApp({ credential: admin.credential.cert(svc) });
+netlify\functions\whoami.cjs:14: initAdmin();
+netlify\functions\whoami.cjs:16: const db = admin.firestore();
+netlify\functions\whoami.cjs:17: const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
+netlify\functions\whoami.cjs:28: const decoded = await admin.auth().verifyIdToken(token);
+
+=== RIPPLE_SPHERICAL ===
+src\components\SphericalFeed.jsx:18: const RIPPLE_AUTHOR_EMAIL = "ripple@sphere"; // pseudo-user identity
+src\components\SphericalFeed.jsx:19: const RIPPLE_NAME = "Ripple";
+src\components\SphericalFeed.jsx:62: function makeDedupeKey(ctx) {
+src\components\SphericalFeed.jsx:79: "ripple",
+src\components\SphericalFeed.jsx:116: *    - Non-admin -> posts_pending
+src\components\SphericalFeed.jsx:118: * ✅ Ripple bot:
+src\components\SphericalFeed.jsx:120: * - So Ripple behaves like a normal user (pending -> admin approve -> live)
+src\components\SphericalFeed.jsx:143: // ✅ NEW: manual Ripple controls
+src\components\SphericalFeed.jsx:144: const [rippleAngle, setRippleAngle] = useState("auto");
+src\components\SphericalFeed.jsx:145: const [ripplePushing, setRipplePushing] = useState(false);
+src\components\SphericalFeed.jsx:210: const targetCollection = isAdmin ? "posts" : "posts_pending";
+src\components\SphericalFeed.jsx:234: async function maybeTriggerRipple(ctx) {
+src\components\SphericalFeed.jsx:250: const dedupeKey = makeDedupeKey(ctx);
+src\components\SphericalFeed.jsx:253: const lsKey = "sphere:spherical:ripple:last";
+src\components\SphericalFeed.jsx:263: if (lastRaw?.key === dedupeKey && Number.isFinite(lastRaw?.at) && now - lastRaw.at < MIN_MS) return;
+src\components\SphericalFeed.jsx:273: const res = await fetch("/.netlify/functions/spherical-ai", {
+src\components\SphericalFeed.jsx:277: // tell server to write to posts_pending as Ripple
+src\components\SphericalFeed.jsx:278: createPending: true,
+src\components\SphericalFeed.jsx:279: dedupeKey,
+src\components\SphericalFeed.jsx:280: ripple: { name: RIPPLE_NAME, email: RIPPLE_AUTHOR_EMAIL },
+src\components\SphericalFeed.jsx:298: if (!res.ok) throw new Error(json?.error || "Ripple generation failed");
+src\components\SphericalFeed.jsx:303: localStorage.setItem(lsKey, JSON.stringify({ key: dedupeKey, at: now }));
+src\components\SphericalFeed.jsx:307: console.warn("Ripple trigger failed (non-fatal):", e);
+src\components\SphericalFeed.jsx:313: async function pushRippleNow() {
+src\components\SphericalFeed.jsx:317: alert("No Flow/Market context yet. Load Home first so Ripple has signal.");
+src\components\SphericalFeed.jsx:321: setRipplePushing(true);
+src\components\SphericalFeed.jsx:331: const baseKey = makeDedupeKey(ctx);
+src\components\SphericalFeed.jsx:334: const dedupeKey =
+src\components\SphericalFeed.jsx:337: rippleAngle +
+src\components\SphericalFeed.jsx:341: const res = await fetch("/.netlify/functions/spherical-ai", {
+src\components\SphericalFeed.jsx:345: createPending: true,
+src\components\SphericalFeed.jsx:346: dedupeKey,
+src\components\SphericalFeed.jsx:347: ripple: { name: RIPPLE_NAME, email: RIPPLE_AUTHOR_EMAIL },
+src\components\SphericalFeed.jsx:349: angle: angleToText(rippleAngle),
+src\components\SphericalFeed.jsx:372: if (!res.ok) throw new Error(j?.error || "Ripple push failed");
+src\components\SphericalFeed.jsx:375: alert("Ripple post created. Approve it in Admin → Posts Pending.");
+src\components\SphericalFeed.jsx:377: alert("Ripple skipped (dedupe). Change angle or try tomorrow.");
+src\components\SphericalFeed.jsx:378: else alert("Ripple ran but did not create a post.");
+src\components\SphericalFeed.jsx:381: alert(e.message || "Ripple push failed");
+src\components\SphericalFeed.jsx:383: setRipplePushing(false);
+src\components\SphericalFeed.jsx:392: // Trigger Ripple when context becomes meaningful
+src\components\SphericalFeed.jsx:395: maybeTriggerRipple(botContext);
+src\components\SphericalFeed.jsx:430: {/* Right: Status + Admin Ripple Controls */}
+src\components\SphericalFeed.jsx:445: value={rippleAngle}
+src\components\SphericalFeed.jsx:446: onChange={(e) => setRippleAngle(e.target.value)}
+src\components\SphericalFeed.jsx:456: <option value="auto">Ripple: Auto</option>
+src\components\SphericalFeed.jsx:457: <option value="changed">Ripple: What changed?</option>
+src\components\SphericalFeed.jsx:458: <option value="pressure">Ripple: Pressure check</option>
+src\components\SphericalFeed.jsx:459: <option value="swap">Ripple: Swap & strategy</option>
+src\components\SphericalFeed.jsx:460: <option value="alignment">Ripple: Alignment check</option>
+src\components\SphericalFeed.jsx:461: <option value="watchlist">Ripple: Next watchlist</option>
+src\components\SphericalFeed.jsx:466: onClick={pushRippleNow}
+src\components\SphericalFeed.jsx:467: disabled={ripplePushing}
+src\components\SphericalFeed.jsx:475: cursor: ripplePushing ? "not-allowed" : "pointer"
+src\components\SphericalFeed.jsx:478: {ripplePushing ? "Pushing…" : "Push Ripple"}
+src\pages\Admin.jsx:125: const q = query(collection(db, "posts_pending"), orderBy("createdAt", "desc"), limit(50));
+src\pages\Admin.jsx:249: const source = p.source ? String(p.source).trim() : null;     // e.g. "ripple"
+src\pages\Admin.jsx:251: const dedupeKey = p.dedupeKey ? String(p.dedupeKey).trim() : null;
+src\pages\Admin.jsx:258: // Keep identity (so "Ripple" shows as Ripple later)
+src\pages\Admin.jsx:265: ...(dedupeKey ? { dedupeKey } : {}),
+src\pages\Admin.jsx:272: await deleteDoc(doc(db, "posts_pending", p.id));
+src\pages\Admin.jsx:286: await deleteDoc(doc(db, "posts_pending", p.id));
+netlify\functions\spherical-ai.cjs:1: // FILE: netlify/functions/spherical-ai.js
+netlify\functions\spherical-ai.cjs:48: async function findRecentRipplePendingByDedupeKey(db, dedupeKey, minutes = 360) {
+netlify\functions\spherical-ai.cjs:49: if (!dedupeKey) return null;
+netlify\functions\spherical-ai.cjs:54: .collection("posts_pending")
+netlify\functions\spherical-ai.cjs:55: .where("source", "==", "ripple")
+netlify\functions\spherical-ai.cjs:56: .where("dedupeKey", "==", String(dedupeKey))
+netlify\functions\spherical-ai.cjs:89: createPending = false,
+netlify\functions\spherical-ai.cjs:90: dedupeKey = "",
+netlify\functions\spherical-ai.cjs:91: ripple = { name: "Ripple", email: "ripple@sphere" },
+netlify\functions\spherical-ai.cjs:103: const rippleName = String(ripple?.name || "Ripple").trim() || "Ripple";
+netlify\functions\spherical-ai.cjs:111: You are ${rippleName}, Sphere’s calm community bot.
+netlify\functions\spherical-ai.cjs:149: if (!createPending) {
+netlify\functions\spherical-ai.cjs:153: // ---- create pending post as Ripple (Admin SDK) ----
+netlify\functions\spherical-ai.cjs:157: const existing = await findRecentRipplePendingByDedupeKey(db, String(dedupeKey || ""), 360);
+netlify\functions\spherical-ai.cjs:162: const rippleEmail = String(ripple?.email || "ripple@sphere").trim() || "ripple@sphere";
+netlify\functions\spherical-ai.cjs:164: await db.collection("posts_pending").add({
+netlify\functions\spherical-ai.cjs:165: title: `${rippleName} · Flow insight`,
+netlify\functions\spherical-ai.cjs:167: tag: rippleName,
+netlify\functions\spherical-ai.cjs:168: authorEmail: rippleEmail,
+netlify\functions\spherical-ai.cjs:169: authorName: rippleName,
+netlify\functions\spherical-ai.cjs:172: source: "ripple",
+netlify\functions\spherical-ai.cjs:173: dedupeKey: String(dedupeKey || ""),
+netlify\functions\spherical-ai.cjs:182: console.error("spherical-ai error:", e);
+

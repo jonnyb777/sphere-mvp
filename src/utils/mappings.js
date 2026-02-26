@@ -6,8 +6,15 @@
  * - Helpers: search companies, normalize input
  * - Merchant classification: merchant -> sector (and optional ticker)
  *
- * Keep this small & editable for MVP. In the live product, this can come from
- * a backend table/API.
+ * MVP upgrade:
+ * - Supports dynamic merchant rules from Firestore via Netlify function:
+ *   GET /.netlify/functions/public-merchant-rules
+ *
+ * IMPORTANT:
+ * - Existing sync exports remain (so your app doesn't break).
+ * - Prefer the new async exports in your upload pipeline:
+ *     await classifyMerchantAsync(merchant)
+ *     await inferSectorFromMerchantAsync(merchant)
  */
 
 export const COMPANY_DIRECTORY = [
@@ -94,7 +101,6 @@ export function searchCompanies(query, limit = 8) {
     const name = normalizeText(c.name);
     const ticker = normalizeText(c.ticker);
 
-    // simple scoring: startsWith beats includes; ticker match gets boost
     let score = 0;
     if (ticker === q) score += 200;
     if (ticker.startsWith(q)) score += 120;
@@ -123,13 +129,76 @@ export function findCompanyByTicker(ticker) {
 }
 
 /* =========================================================
-   Merchant → Sector (and optional Ticker) Rules
-   Goal:
-   - Make Drip/Flow sectoring accurate even when no ticker exists.
-   - Keep rules simple, readable, and easy to extend.
-   Notes:
-   - "sector" is your Sphere sector label (not GICS).
-   - Some merchants also map to a public ticker; many won't.
+   Dynamic Merchant Rules (from Firestore via Netlify)
+   ========================================================= */
+
+let _dynRulesCache = null;
+let _dynRulesAt = 0;
+
+function cleanDynRule(r) {
+  return {
+    id: r?.id || null,
+    mode: r?.mode === "regex" ? "regex" : "contains",
+    pattern: String(r?.pattern || "").trim(),
+    sector: r?.sector ? String(r.sector).trim() : null,
+    ticker: r?.ticker ? String(r.ticker).trim().toUpperCase() : null
+  };
+}
+
+export async function fetchDynamicMerchantRules({ force = false } = {}) {
+  const ttlMs = 5 * 60 * 1000;
+  const now = Date.now();
+
+  if (!force && _dynRulesCache && now - _dynRulesAt < ttlMs) return _dynRulesCache;
+
+  try {
+    const res = await fetch("/.netlify/functions/public-merchant-rules", { cache: "no-store" });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.error || "Failed to fetch merchant rules");
+
+    const rows = Array.isArray(j?.rows) ? j.rows : [];
+    _dynRulesCache = rows.map(cleanDynRule).filter((x) => x.pattern && (x.sector || x.ticker));
+    _dynRulesAt = now;
+    return _dynRulesCache;
+  } catch {
+    // If rules fail to load, do NOT break app — just fall back to local rules.
+    _dynRulesCache = [];
+    _dynRulesAt = now;
+    return _dynRulesCache;
+  }
+}
+
+export function applyDynamicMerchantRules(rules, merchant = "") {
+  const m = String(merchant || "").trim();
+  if (!m) return null;
+
+  const ml = m.toLowerCase();
+
+  for (const r of rules || []) {
+    if (!r?.pattern) continue;
+    if (r.mode === "contains") {
+      const p = String(r.pattern || "").toLowerCase().trim();
+      if (p && ml.includes(p)) {
+        return { sector: r.sector || null, ticker: r.ticker || null, ruleId: r.id || null, source: "dynamic" };
+      }
+    } else {
+      // regex
+      try {
+        const re = new RegExp(r.pattern, "i");
+        if (re.test(m)) {
+          return { sector: r.sector || null, ticker: r.ticker || null, ruleId: r.id || null, source: "dynamic" };
+        }
+      } catch {
+        // ignore invalid regex
+      }
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+   Merchant → Sector (and optional Ticker) Rules (LOCAL)
    ========================================================= */
 
 const MERCHANT_RULES = [
@@ -203,15 +272,27 @@ function matchMerchantRule(merchant = "") {
 /**
  * New helper:
  * Infer Sector from merchant text (works even when no ticker exists).
+ * (SYNC local-only)
  */
 export function inferSectorFromMerchant(merchant = "") {
   const hit = matchMerchantRule(merchant);
   if (hit?.sector) return hit.sector;
 
-  // If we can infer a ticker, fall back to directory sector
   const t = inferTickerFromMerchant(merchant);
   const c = t ? findCompanyByTicker(t) : null;
   return c?.sector || null;
+}
+
+/**
+ * Async version (dynamic rules first).
+ */
+export async function inferSectorFromMerchantAsync(merchant = "") {
+  const rules = await fetchDynamicMerchantRules();
+  const dyn = applyDynamicMerchantRules(rules, merchant);
+  if (dyn?.sector) return dyn.sector;
+
+  // fall back to local
+  return inferSectorFromMerchant(merchant);
 }
 
 /**
@@ -224,7 +305,7 @@ export function inferSectorFromTicker(ticker = "") {
 }
 
 /**
- * Merchant classifier:
+ * Merchant classifier (SYNC local-only):
  * returns { sector, ticker } when possible
  */
 export function classifyMerchant(merchant = "") {
@@ -234,6 +315,19 @@ export function classifyMerchant(merchant = "") {
   const t = inferTickerFromMerchant(merchant);
   const sector = t ? inferSectorFromTicker(t) : null;
   return { sector: sector || null, ticker: t || null };
+}
+
+/**
+ * Merchant classifier (ASYNC dynamic-first):
+ * returns { sector, ticker, source, ruleId } where possible
+ */
+export async function classifyMerchantAsync(merchant = "") {
+  const rules = await fetchDynamicMerchantRules();
+  const dyn = applyDynamicMerchantRules(rules, merchant);
+  if (dyn) return { sector: dyn.sector || null, ticker: dyn.ticker || null, source: dyn.source, ruleId: dyn.ruleId };
+
+  const local = classifyMerchant(merchant);
+  return { ...local, source: "local", ruleId: null };
 }
 
 /**
@@ -283,4 +377,15 @@ export function inferTickerFromMerchant(merchant = "") {
   }
 
   return null;
+}
+
+/**
+ * Async ticker inference (dynamic-first).
+ * If a dynamic rule has a ticker, return it.
+ */
+export async function inferTickerFromMerchantAsync(merchant = "") {
+  const rules = await fetchDynamicMerchantRules();
+  const dyn = applyDynamicMerchantRules(rules, merchant);
+  if (dyn?.ticker) return dyn.ticker;
+  return inferTickerFromMerchant(merchant);
 }

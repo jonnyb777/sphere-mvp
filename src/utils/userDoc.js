@@ -1,3 +1,4 @@
+// FILE: src/utils/userDoc.js
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -6,11 +7,13 @@ import { db } from "../firebase";
  * - First login: creates users/{uid}
  * - Every login: updates lastLoginAt + email
  *
- * Server-backed source of truth fields:
- * - role (e.g. "admin")
- * - flowAccess (boolean)
- * - canPost (boolean)
- * - onboardingComplete (boolean)
+ * Server-backed truth fields:
+ * - role
+ * - flowAccess (legacy UI gate; keep for compatibility)
+ * - entitlements.flow (new explicit truth)
+ * - flowConsent
+ * - canPost
+ * - onboardingComplete
  */
 export async function ensureUserDoc(firebaseUser) {
   if (!firebaseUser?.uid) return null;
@@ -25,15 +28,30 @@ export async function ensureUserDoc(firebaseUser) {
   };
 
   if (!snap.exists()) {
-    // ✅ First login: create defaults
     const first = {
       ...base,
       createdAt: serverTimestamp(),
 
-      // ---- Server-backed flags ----
-      role: "user",        // you can manually set yourself to "admin"
-      flowAccess: false,  // paid access flag
-      canPost: true,      // can submit to Spherical
+      role: "user",
+
+      // Legacy gate (keep; UI expects it)
+      flowAccess: false,
+
+      // Explicit entitlement truth (used by webhook/admin; safer long-term)
+      entitlements: {
+        flow: {
+          active: false,
+          source: "none",      // "stripe" | "admin" | "none"
+          status: "inactive",  // "paid" | "past_due" | "inactive" | "canceled"
+          graceUntil: null,
+          updatedAt: null
+        }
+      },
+
+      // Anonymized contribution opt-in
+      flowConsent: false,
+
+      canPost: true,
       onboardingComplete: false
     };
 
@@ -41,14 +59,11 @@ export async function ensureUserDoc(firebaseUser) {
     return first;
   }
 
-  // ✅ Returning user: update login info only
+  // Returning user: update login info only
   await setDoc(ref, base, { merge: true });
   return snap.data();
 }
 
-/**
- * Optional helper if you ever want to fetch manually
- */
 export async function readUserDoc(uid) {
   if (!uid) return null;
   const ref = doc(db, "users", uid);

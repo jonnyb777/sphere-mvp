@@ -1,5 +1,6 @@
 // FILE: src/pages/Home.jsx
 import { useEffect, useMemo, useState } from "react";
+
 import TransactionUploader from "../components/TransactionUploader";
 import MonthlyDrip from "../components/MonthlyDrip";
 import MarketPulse from "../components/MarketPulse";
@@ -11,11 +12,12 @@ import SphericalFeed from "../components/SphericalFeed";
 import Admin from "./Admin";
 
 import { classifyMerchant } from "../utils/merchantSectorMap";
+import { hasFlowAccess as computeHasFlowAccess } from "../utils/entitlements";
+
 import { PageShell, Tabs, Card } from "../components/ui/UiKit";
 import { SectionBand, usePersistedBool, UI, Badge } from "../components/SectionUI";
 import sphereLogo from "../assets/sphere-logo.png";
 
-// ✅ Admin check only
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -37,7 +39,6 @@ function Section({ storageKey, label, defaultOpen = true, children }) {
    ========================= */
 function UpgradeModal({ open, onClose, userEmail, userUid }) {
   const [busy, setBusy] = useState(false);
-
   if (!open) return null;
 
   async function goToCheckout() {
@@ -272,7 +273,6 @@ export default function Home({ user, firebaseUser }) {
           if (alive) setIsAdmin(false);
           return;
         }
-
         const adminRef = doc(db, "admins", user.uid);
         const snap = await getDoc(adminRef);
         if (alive) setIsAdmin(snap.exists());
@@ -288,12 +288,8 @@ export default function Home({ user, firebaseUser }) {
     };
   }, [user?.uid]);
 
-  // ✅ Flow access is server-backed on users/{uid}.flowAccess (+ admin override)
-  const hasFlowAccess = useMemo(() => {
-    if (user?.flowAccess === true) return true;
-    if (isAdmin) return true;
-    return false;
-  }, [user?.flowAccess, isAdmin]);
+  // ✅ SINGLE TRUTH: entitlements.flow.active ?? grace ?? legacy flowAccess (admin override)
+  const hasFlowAccess = useMemo(() => computeHasFlowAccess(user, isAdmin), [user, isAdmin]);
 
   const [simpleMode, setSimpleMode] = useState(true);
   useEffect(() => {
@@ -301,6 +297,7 @@ export default function Home({ user, firebaseUser }) {
   }, [hasFlowAccess]);
 
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const handleUpgradeClick = () => setUpgradeOpen(true);
 
   const [timeframeDays, setTimeframeDays] = useState(30);
   const [asOfDate, setAsOfDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -313,29 +310,86 @@ export default function Home({ user, firebaseUser }) {
   const [personalRunners, setPersonalRunners] = useState([]);
   const [sectorLeaders, setSectorLeaders] = useState([]);
 
-  // ✅ Tick ers "where available" come from classifyMerchant()
+  // ✅ Flow context for SphereBot → Spherical
+  const [flowTopSectors, setFlowTopSectors] = useState([]);
+  const [flowRunners, setFlowRunners] = useState([]); // array of tickers (strings)
+  const [flowMerchants, setFlowMerchants] = useState([]); // array of { ticker, sector, signal }
+
+  // ✅ Tickers "where available" come from classifyMerchant()
+  // Spend-only transactions -> merchant -> classify -> ticker
   const userSpendTickers = useMemo(() => {
-  const set = new Set();
+    const set = new Set();
 
-  for (const tx of transactions || []) {
-    const amt = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
-    if (!Number.isFinite(amt)) continue;
+    for (const tx of transactions || []) {
+      const amt = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
+      if (!Number.isFinite(amt)) continue;
 
-    // Spend only
-    if (amt >= 0) continue;
+      // Spend only (negative amounts)
+      if (amt >= 0) continue;
 
-    const m = String(tx.merchant || tx.Merchant || tx.name || tx.Name || "").trim();
-    if (!m) continue;
+      const m = String(tx.merchant || tx.Merchant || tx.name || tx.Name || "").trim();
+      if (!m) continue;
 
-    const classified = classifyMerchant(m);
-    const t = classified?.ticker ? String(classified.ticker).toUpperCase().trim() : "";
-    if (t) set.add(t);
-  }
+      const classified = classifyMerchant(m);
+      const t = classified?.ticker ? String(classified.ticker).toUpperCase().trim() : "";
+      if (t) set.add(t);
+    }
 
-  return Array.from(set).sort();
-}, [transactions]);
+    return Array.from(set).sort();
+  }, [transactions]);
 
-  const handleUpgradeClick = () => setUpgradeOpen(true);
+  // ✅ Alignment = overlap between your runners and Flow runners
+  const flowRunnerTickers = useMemo(() => {
+    return (Array.isArray(flowRunners) ? flowRunners : [])
+      .map((t) => String(t || "").toUpperCase().trim())
+      .filter(Boolean);
+  }, [flowRunners]);
+
+  const personalRunnerTickers = useMemo(() => {
+    return (Array.isArray(personalRunners) ? personalRunners : [])
+      .map((t) => String(t || "").toUpperCase().trim())
+      .filter(Boolean);
+  }, [personalRunners]);
+
+  const alignmentOverlap = useMemo(() => {
+    const a = new Set(personalRunnerTickers);
+    const b = new Set(flowRunnerTickers);
+    const shared = [];
+    for (const t of a) if (b.has(t)) shared.push(t);
+    shared.sort();
+    return {
+      sharedTickers: shared,
+      userRunnerCount: personalRunnerTickers.length,
+      flowRunnerCount: flowRunnerTickers.length
+    };
+  }, [personalRunnerTickers, flowRunnerTickers]);
+
+  // ✅ Bot payload context (what SphereBot "gleans")
+  const sphericalBotContext = useMemo(() => {
+    return {
+      window: { timeframeDays, asOfDate: asOfDate || "", timeMode },
+      flow: {
+        topSectors: Array.isArray(flowTopSectors) ? flowTopSectors : [],
+        topRunners: flowRunnerTickers,
+        topMerchants: (Array.isArray(flowMerchants) ? flowMerchants : []).slice(0, 10)
+      },
+      marketPulse: {
+        sectorLeaders: Array.isArray(sectorLeaders) ? sectorLeaders : [],
+        personalRunners: personalRunnerTickers
+      },
+      alignment: alignmentOverlap
+    };
+  }, [
+    timeframeDays,
+    asOfDate,
+    timeMode,
+    flowTopSectors,
+    flowRunnerTickers,
+    flowMerchants,
+    sectorLeaders,
+    personalRunnerTickers,
+    alignmentOverlap
+  ]);
 
   const tabs = useMemo(() => {
     const base = [
@@ -422,7 +476,11 @@ export default function Home({ user, firebaseUser }) {
           </Section>
 
           <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
-            <AlignmentSnapshotDrip transactions={transactions} sectorLeaders={sectorLeaders} personalRunners={personalRunners} />
+            <AlignmentSnapshotDrip
+              transactions={transactions}
+              sectorLeaders={sectorLeaders}
+              personalRunners={personalRunners}
+            />
 
             {!hasFlowAccess && simpleMode && (
               <div style={{ marginTop: "1rem", textAlign: "center" }}>
@@ -451,14 +509,12 @@ export default function Home({ user, firebaseUser }) {
 
       {/* FLOW */}
       {(hasFlowAccess || !simpleMode) && activeTab === "flow" && (
-        <FlowGate
-          hasAccess={hasFlowAccess}
-          onUpgradeClick={() => {
-            handleUpgradeClick();
-          }}
-        >
+        <FlowGate hasAccess={hasFlowAccess} onUpgradeClick={handleUpgradeClick}>
           <Section label="Monthly Flow" storageKey="home:flowMonthly">
             <MonthlyFlow
+              flowAccess={hasFlowAccess}
+              flowConsent={!!user?.flowConsent}
+              userUid={user?.uid || ""}
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="monthly"
@@ -468,11 +524,16 @@ export default function Home({ user, firebaseUser }) {
               setTimeframeDays={setTimeframeDays}
               setAsOfDate={setAsOfDate}
               setTimeMode={setTimeMode}
+              marketSectorLeaders={sectorLeaders}
+              marketPersonalRunners={personalRunners}
             />
           </Section>
 
-          <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
+          <Section label={`Flow Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
             <MonthlyFlow
+              flowAccess={hasFlowAccess}
+              flowConsent={!!user?.flowConsent}
+              userUid={user?.uid || ""}
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="pulse"
@@ -482,11 +543,29 @@ export default function Home({ user, firebaseUser }) {
               setTimeframeDays={setTimeframeDays}
               setAsOfDate={setAsOfDate}
               setTimeMode={setTimeMode}
+              marketSectorLeaders={sectorLeaders}
+              marketPersonalRunners={personalRunners}
+              onCommunityTopSectorsChange={setFlowTopSectors}
+              onCommunityRunnersChange={(rows) =>
+                setFlowRunners((rows || []).map((x) => x?.ticker).filter(Boolean))
+              }
+              onCommunityMerchantsChange={(rows) =>
+                setFlowMerchants(
+                  (rows || []).map((x) => ({
+                    ticker: x?.ticker,
+                    sector: x?.sector,
+                    signal: x?.signal
+                  }))
+                )
+              }
             />
           </Section>
 
           <Section label="Alignment Snapshot (Flow)" storageKey="home:flowAlign">
             <MonthlyFlow
+              flowAccess={hasFlowAccess}
+              flowConsent={!!user?.flowConsent}
+              userUid={user?.uid || ""}
               userSpendTickers={userSpendTickers}
               userRunners={personalRunners}
               section="alignment"
@@ -496,6 +575,8 @@ export default function Home({ user, firebaseUser }) {
               setTimeframeDays={setTimeframeDays}
               setAsOfDate={setAsOfDate}
               setTimeMode={setTimeMode}
+              marketSectorLeaders={sectorLeaders}
+              marketPersonalRunners={personalRunners}
             />
           </Section>
         </FlowGate>
@@ -517,7 +598,7 @@ export default function Home({ user, firebaseUser }) {
       {/* SPHERICAL */}
       {activeTab === "spherical" && (
         <Section label="Spherical — Community Feed" storageKey="home:spherical" defaultOpen={true}>
-          <SphericalFeed userEmail={user?.email || ""} onUpgradeClick={() => handleUpgradeClick()} />
+          <SphericalFeed userEmail={user?.email || ""} onUpgradeClick={handleUpgradeClick} botContext={sphericalBotContext} />
         </Section>
       )}
 

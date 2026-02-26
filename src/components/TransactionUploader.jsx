@@ -2,25 +2,28 @@
 import { useMemo, useState } from "react";
 
 /**
- * MVP uploader (practical rules):
+ * Uploader (practical rules):
  * - Accept CSV + JSON
  * - Parses common bank exports, including:
  *   - merchant/amount/date/description
  *   - Details | Posting Date | Description | Amount | Type
  * - Supports comma-separated OR tab-separated files (many banks export TSV-ish)
- * - Treats SPEND as:
- *    ✅ DEBIT rows when details explicitly says debit (if available)
- *    ✅ negative Amount rows (fallback)
- *    ✅ positive Amount rows ONLY when clearly a refund/chargeback/return
- * - Excludes:
- *    ❌ income credits
- *    ❌ transfers
- *    ❌ credit card payments
- *    ❌ cash app / zelle / venmo peer transfers (best-effort)
+ *
+ * IMPORTANT (matches ingest-upload.cjs expectations):
+ * - SPEND rows are sent as NEGATIVE amounts
+ * - REFUNDS/CHARGEBACKS are sent as POSITIVE amounts
+ * - Income credits are excluded
+ *
+ * Excludes (best-effort):
+ *   - transfers
+ *   - credit card payments
+ *   - peer transfers (Cash App / Zelle / Venmo)
  *
  * Output rows (normalized):
  *   { merchant, amount, date, description }
- * where amount is POSITIVE for spend, NEGATIVE for refunds (optional netting).
+ * where amount is:
+ *   - NEGATIVE for spend (purchase)
+ *   - POSITIVE for refunds/chargebacks/returns
  */
 
 function stripOuterQuotes(s) {
@@ -174,14 +177,18 @@ function looksLikeNonConsumption(desc, details, type) {
   return patterns.some((p) => s.includes(p));
 }
 
-// Positive credits that are “okay” to include as negative spend (refunds)
-// (We convert these to NEGATIVE spend to net down your spend.)
+// Positive credits that are “okay” to include (refunds/chargebacks/returns)
 function looksLikeRefund(desc, details) {
   const s = `${desc} ${details}`.toLowerCase();
   const patterns = ["refund", "return", "reversal", "chargeback", "credit voucher", "adjustment"];
   return patterns.some((p) => s.includes(p));
 }
 
+/**
+ * Normalize to ingest-upload.cjs sign convention:
+ * - spend => NEGATIVE
+ * - refund => POSITIVE
+ */
 function normalizeAnyRows(rows) {
   const arr = Array.isArray(rows) ? rows : [];
 
@@ -206,9 +213,9 @@ function normalizeAnyRows(rows) {
       const amt = parseAmount(amountRaw);
 
       // Merchant field: prefer Description when present; else use parsed description
-      const merchant = stripOuterQuotes(
-        pick(r, ["merchant", "Merchant", "description", "Description", "name", "Name", "payee", "Payee"])
-      ).trim() || description;
+      const merchant =
+        stripOuterQuotes(pick(r, ["merchant", "Merchant", "description", "Description", "name", "Name", "payee", "Payee"])).trim() ||
+        description;
 
       if (!merchant || amt === null) return null;
 
@@ -220,45 +227,45 @@ function normalizeAnyRows(rows) {
       const explicitDebit = detailsLower.includes("debit");
       const explicitCredit = detailsLower.includes("credit");
 
-      // Decide if we should include the row and what spend amount should be.
-      // Goal: spend > 0, refunds < 0, ignore income credits.
-      let spend = null;
+      // Decide whether to include, and normalize sign to server convention.
+      // Output:
+      //  - spend: NEGATIVE
+      //  - refunds: POSITIVE
+      let normalizedAmount = null;
 
       if (explicitDebit) {
-        // DEBIT: treat as purchase spend
-        spend = Math.abs(amt);
+        // DEBIT purchase spend
+        normalizedAmount = -Math.abs(amt);
       } else if (explicitCredit) {
         // CREDIT: only include if it looks like a refund/chargeback; otherwise ignore (income/transfer)
         if (looksLikeRefund(merchant, details)) {
-          spend = -Math.abs(amt);
+          normalizedAmount = Math.abs(amt);
         } else {
           return null;
         }
       } else {
         // No explicit debit/credit:
         // - negative amount => spend
-        // - positive amount => ignore unless refund-like
+        // - positive amount => include ONLY if refund-like, else ignore (income/transfer)
         if (amt < 0) {
-          spend = Math.abs(amt);
+          normalizedAmount = -Math.abs(amt);
         } else {
           if (looksLikeRefund(merchant, details)) {
-            spend = -Math.abs(amt);
+            normalizedAmount = Math.abs(amt);
           } else {
             return null;
           }
         }
       }
 
-      // Final normalized object: keep original merchant/description both
       return {
         merchant: merchant.replace(/\s+/g, " ").trim(),
-        amount: spend, // POSITIVE spend; NEGATIVE refunds
+        amount: normalizedAmount, // NEGATIVE spend; POSITIVE refunds
         date,
         description: description || merchant
       };
     })
     .filter(Boolean)
-    // keep only rows with finite numeric amount (allow negative refunds)
     .filter((x) => x.merchant && Number.isFinite(x.amount));
 }
 
@@ -332,19 +339,19 @@ export default function TransactionUploader({ user, onUpload }) {
 
       if (!normalized.length) {
         setLastStatus(
-          "We couldn’t find any usable spend rows in that file. Tip: make sure it includes a Description/merchant and Amount, and that purchases are debits or negative amounts."
+          "We couldn’t find any usable purchase/refund rows in that file. Tip: make sure it includes a Description/merchant and Amount, and that purchases are debits or negative amounts."
         );
         return;
       }
 
-      // Instant UI update
+      // Instant UI update (passes normalized rows; spend is negative, refunds are positive)
       onUpload?.(normalized);
 
-      // Secure ingest (required for your live app flow)
+      // Secure ingest (required for your live flow)
       const ok = await sendIngest({ normalizedRows: normalized, filename: file.name });
 
       if (ok) {
-        setLastStatus(`Upload complete — ${normalized.length} spend rows (${kind}). Your data is now flowing into Sphere.`);
+        setLastStatus(`Upload complete — ${normalized.length} rows (${kind}). Your data is now flowing into Sphere.`);
       } else {
         setLastStatus("Your bubble popped. Please try again in a moment.");
       }
@@ -387,6 +394,12 @@ export default function TransactionUploader({ user, onUpload }) {
         <br />
         • Bank: <b>Details</b>, <b>Posting Date</b>, <b>Description</b>, <b>Amount</b>, <b>Type</b>
         <br />
+        <br />
+        Sign convention sent to the server:
+        <br />
+        • Purchases (spend) are sent as <b>negative</b> amounts
+        <br />
+        • Refunds/chargebacks are sent as <b>positive</b> amounts
       </p>
     </div>
   );

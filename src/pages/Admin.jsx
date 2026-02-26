@@ -63,8 +63,31 @@ async function getAdminTokenOrThrow() {
   return token;
 }
 
+const SECTORS = [
+  "Consumer & Retail",
+  "Restaurants",
+  "Grocery",
+  "Big Box Retail",
+  "Pharmacies",
+  "Transportation",
+  "Media & Entertainment",
+  "Technology",
+  "Telecom",
+  "Subscriptions",
+  "Travel",
+  "Healthcare",
+  "Financials",
+  "Insurance",
+  "Energy",
+  "Utilities",
+  "Industrials",
+  "Materials",
+  "Real Estate",
+  "Other / Unmapped"
+];
+
 export default function Admin() {
-  const [tab, setTab] = useState("waitlist"); // waitlist | users | pending | uploads
+  const [tab, setTab] = useState("waitlist"); // waitlist | users | pending | uploads | mappings
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -72,6 +95,11 @@ export default function Admin() {
   const [users, setUsers] = useState([]);
   const [pending, setPending] = useState([]);
   const [uploads, setUploads] = useState([]);
+
+  // mappings state
+  const [rules, setRules] = useState([]);
+  const [ruleQuery, setRuleQuery] = useState("");
+  const [newRule, setNewRule] = useState({ merchantNorm: "", sector: "Consumer & Retail", ticker: "", sample: "" });
 
   async function loadWaitlist() {
     const q = query(collection(db, "waitlist"), orderBy("createdAt", "desc"), limit(50));
@@ -102,12 +130,38 @@ export default function Admin() {
   // Upload batch list via admin function (avoids collectionGroup/index headaches)
   async function loadUploads() {
     const token = await getAdminTokenOrThrow();
+
     const res = await fetch("/.netlify/functions/admin-list-uploads?limit=50", {
       headers: { Authorization: `Bearer ${token}` }
     });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.error || "Failed to load uploads");
+
+    const text = await res.text();
+
+    let j = null;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      // show raw text on error
+    }
+
+    if (!res.ok) {
+      const msg =
+        (j && (j.error || j.message)) ||
+        `HTTP ${res.status} ${res.statusText}\nFirst chars: ${text.slice(0, 400)}`;
+      throw new Error(msg);
+    }
+
     setUploads(Array.isArray(j?.rows) ? j.rows : []);
+  }
+
+  async function loadRules() {
+    const token = await getAdminTokenOrThrow();
+    const res = await fetch("/.netlify/functions/admin-list-merchant-rules?limit=500", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j?.error || "Failed to load merchant rules");
+    setRules(Array.isArray(j?.rows) ? j.rows : []);
   }
 
   async function refresh() {
@@ -118,6 +172,7 @@ export default function Admin() {
       if (tab === "users") await loadUsers();
       if (tab === "pending") await loadPending();
       if (tab === "uploads") await loadUploads();
+      if (tab === "mappings") await loadRules();
     } catch (e) {
       console.error("Admin refresh error:", e);
       setErr(e?.message || "Failed to load admin data.");
@@ -149,49 +204,80 @@ export default function Admin() {
   );
 
   async function grantFlow(uid, nextValue) {
-    setBusy(true);
-    setErr("");
-    try {
-      await setDoc(
-        doc(db, "users", uid),
-        {
-          flowAccess: !!nextValue,
-          updatedAt: serverTimestamp()
+  setBusy(true);
+  setErr("");
+  try {
+    await setDoc(
+      doc(db, "users", uid),
+      {
+        // Legacy gate (keep)
+        flowAccess: !!nextValue,
+
+        // Explicit entitlement truth
+        entitlements: {
+          flow: {
+            active: !!nextValue,
+            source: "admin",
+            status: nextValue ? "paid" : "inactive",
+            graceUntil: null,
+            updatedAt: serverTimestamp()
+          }
         },
-        { merge: true }
-      );
-      await loadUsers();
-    } catch (e) {
-      console.error("grantFlow error:", e);
-      setErr(e?.message || "Could not update flowAccess.");
-    } finally {
-      setBusy(false);
-    }
+
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    );
+    await loadUsers();
+  } catch (e) {
+    console.error("grantFlow error:", e);
+    setErr(e?.message || "Could not update flowAccess.");
+  } finally {
+    setBusy(false);
   }
+}
 
   async function approvePost(p) {
-    setBusy(true);
-    setErr("");
-    try {
-      await setDoc(doc(db, "posts", p.id), {
-        title: String(p.title || "").trim(),
-        body: String(p.body || "").trim(),
-        tag: String(p.tag || "Post").trim(),
-        authorEmail: p.authorEmail || null,
-        createdAt: p.createdAt || serverTimestamp(),
-        approvedAt: serverTimestamp(),
-        status: "published"
-      });
+  setBusy(true);
+  setErr("");
+  try {
+    // Preserve safe "author identity" + bot metadata if present
+    const authorEmail = p.authorEmail ? String(p.authorEmail) : null;
+    const authorName = p.authorName ? String(p.authorName).trim() : null;
 
-      await deleteDoc(doc(db, "posts_pending", p.id));
-      await loadPending();
-    } catch (e) {
-      console.error("approvePost error:", e);
-      setErr(e?.message || "Could not approve post.");
-    } finally {
-      setBusy(false);
-    }
+    // Optional metadata (safe to carry forward; ignored by UI if unused)
+    const source = p.source ? String(p.source).trim() : null;     // e.g. "ripple"
+    const windowKey = p.window ? String(p.window).trim() : null;  // e.g. "30d.trailing.2026-02-19"
+    const dedupeKey = p.dedupeKey ? String(p.dedupeKey).trim() : null;
+
+    await setDoc(doc(db, "posts", p.id), {
+      title: String(p.title || "").trim(),
+      body: String(p.body || "").trim(),
+      tag: String(p.tag || "Post").trim(),
+
+      // Keep identity (so "Ripple" shows as Ripple later)
+      authorEmail,
+      authorName,
+
+      // Keep bot/run metadata (optional)
+      ...(source ? { source } : {}),
+      ...(windowKey ? { window: windowKey } : {}),
+      ...(dedupeKey ? { dedupeKey } : {}),
+
+      createdAt: p.createdAt || serverTimestamp(),
+      approvedAt: serverTimestamp(),
+      status: "published"
+    });
+
+    await deleteDoc(doc(db, "posts_pending", p.id));
+    await loadPending();
+  } catch (e) {
+    console.error("approvePost error:", e);
+    setErr(e?.message || "Could not approve post.");
+  } finally {
+    setBusy(false);
   }
+}
 
   async function rejectPost(p) {
     setBusy(true);
@@ -233,15 +319,98 @@ export default function Admin() {
     }
   }
 
+  async function upsertRule(payload) {
+    setBusy(true);
+    setErr("");
+    try {
+      const token = await getAdminTokenOrThrow();
+      const res = await fetch("/.netlify/functions/admin-upsert-merchant-rule", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Failed to save rule.");
+      await loadRules();
+    } catch (e) {
+      console.error("upsertRule error:", e);
+      setErr(e?.message || "Failed to save rule.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteRule(merchantNorm) {
+    if (!window.confirm(`Delete rule for:\n\n${merchantNorm}\n\nThis cannot be undone.`)) return;
+
+    setBusy(true);
+    setErr("");
+    try {
+      const token = await getAdminTokenOrThrow();
+      const res = await fetch("/.netlify/functions/admin-delete-merchant-rule", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ merchantNorm })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Failed to delete rule.");
+      await loadRules();
+    } catch (e) {
+      console.error("deleteRule error:", e);
+      setErr(e?.message || "Failed to delete rule.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const header = useMemo(() => {
     const map = {
       waitlist: "Waitlist (latest 50)",
       users: "Users (latest 50)",
       pending: "Posts Pending (latest 50)",
-      uploads: "Uploads (latest 50)"
+      uploads: "Uploads (latest 50)",
+      mappings: "Mappings (Merchant Rules)"
     };
     return map[tab];
   }, [tab]);
+
+  const filteredRules = useMemo(() => {
+    const q = String(ruleQuery || "").trim().toLowerCase();
+    if (!q) return rules;
+    return (rules || []).filter((r) => {
+      const mn = String(r.merchantNorm || "").toLowerCase();
+      const sec = String(r.sector || "").toLowerCase();
+      const t = String(r.ticker || "").toLowerCase();
+      const s = String(r.sample || "").toLowerCase();
+      return mn.includes(q) || sec.includes(q) || t.includes(q) || s.includes(q);
+    });
+  }, [rules, ruleQuery]);
+
+  // pull “unmapped suggestions” from upload rollups (top items across latest uploads)
+  const unmappedSuggestions = useMemo(() => {
+    const counts = new Map(); // merchantNorm -> totalCount
+    const samples = new Map(); // merchantNorm -> sample (best effort)
+    for (const u of uploads || []) {
+      const top = u?.rollups?.unmappedTop || {};
+      for (const [mn, c] of Object.entries(top)) {
+        const n = Number(c || 0);
+        if (!Number.isFinite(n) || n <= 0) continue;
+        counts.set(mn, (counts.get(mn) || 0) + n);
+        // we don't have raw sample in rollups; just keep merchantNorm as sample fallback
+        if (!samples.has(mn)) samples.set(mn, mn);
+      }
+    }
+    const arr = Array.from(counts.entries())
+      .map(([merchantNorm, count]) => ({ merchantNorm, count, sample: samples.get(merchantNorm) || null }))
+      .sort((a, b) => b.count - a.count);
+    return arr.slice(0, 40);
+  }, [uploads]);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -250,6 +419,7 @@ export default function Admin() {
         {navBtn("users", "Users")}
         {navBtn("pending", "Posts Pending")}
         {navBtn("uploads", "Uploads")}
+        {navBtn("mappings", "Mappings")}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
           <button
@@ -401,7 +571,7 @@ export default function Admin() {
                     {String(p.title || "").trim() || "(No title)"}
                   </div>
                   <div style={{ opacity: 0.85, marginTop: 4 }}>
-                    tag: <b>{p.tag || "Post"}</b> · {formatWhen(p.createdAt)} · {p.authorEmail || "—"}
+                    tag: <b>{p.tag || "Post"}</b> · {formatWhen(p.createdAt)} · {p.authorName || p.authorEmail || "—"}
                   </div>
                   <div style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>{String(p.body || "").trim()}</div>
 
@@ -506,6 +676,13 @@ export default function Admin() {
                           ) : null}
                         </div>
 
+                        {u.adminStatus === "deleted" ? (
+                          <div style={{ opacity: 0.9, marginTop: 6 }}>
+                            <b>Removed:</b> {u.adminDeleteReason || "—"}{" "}
+                            <span style={{ opacity: 0.75 }}>({formatWhen(u.adminDeletedAt)})</span>
+                          </div>
+                        ) : null}
+
                         <div style={{ opacity: 0.85, marginTop: 4 }}>
                           rows: <b>{u?.stats?.totalRows ?? "—"}</b> · uniqueTx: <b>{u?.stats?.uniqueTxCount ?? "—"}</b> ·
                           coverageDays: <b>{u?.stats?.coverageDays ?? "—"}</b>
@@ -540,7 +717,7 @@ export default function Admin() {
                             .join("\n")}
                         </div>
                         <div style={{ marginTop: 8, opacity: 0.85, fontSize: 12 }}>
-                          Fix by adding mapping rules to your merchant map; once mapped, this badge disappears.
+                          Fix by adding a rule in the Mappings tab; after you re-upload, this badge should disappear.
                         </div>
                       </div>
                     ) : null}
@@ -548,6 +725,295 @@ export default function Admin() {
                 );
               })
             )}
+          </div>
+        )}
+
+        {tab === "mappings" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid var(--s-divider, #d6dee6)",
+                background: "white"
+              }}
+            >
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Add / Update Merchant Rule</div>
+
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ fontWeight: 800 }}>
+                  merchantNorm (exact)
+                  <input
+                    value={newRule.merchantNorm}
+                    onChange={(e) => setNewRule((p) => ({ ...p, merchantNorm: e.target.value }))}
+                    placeholder="e.g. AMZN MKTPLACE PMTS"
+                    style={{ width: "100%", marginTop: 6, padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                  />
+                </label>
+
+                <label style={{ fontWeight: 800 }}>
+                  sector
+                  <select
+                    value={newRule.sector}
+                    onChange={(e) => setNewRule((p) => ({ ...p, sector: e.target.value }))}
+                    style={{ width: "100%", marginTop: 6, padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                  >
+                    {SECTORS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ fontWeight: 800 }}>
+                  ticker (optional)
+                  <input
+                    value={newRule.ticker}
+                    onChange={(e) => setNewRule((p) => ({ ...p, ticker: e.target.value }))}
+                    placeholder="e.g. AMZN"
+                    style={{ width: "100%", marginTop: 6, padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                  />
+                </label>
+
+                <label style={{ fontWeight: 800 }}>
+                  sample (optional)
+                  <input
+                    value={newRule.sample}
+                    onChange={(e) => setNewRule((p) => ({ ...p, sample: e.target.value }))}
+                    placeholder="raw merchant example"
+                    style={{ width: "100%", marginTop: 6, padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                  />
+                </label>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => upsertRule(newRule)}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--s-divider, #d6dee6)",
+                      background: "var(--s-ice, #eaf2f8)",
+                      fontWeight: 900,
+                      cursor: busy ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    Save rule
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      setNewRule({ merchantNorm: "", sector: "Consumer & Retail", ticker: "", sample: "" })
+                    }
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid var(--s-divider, #d6dee6)",
+                      background: "white",
+                      fontWeight: 900,
+                      cursor: busy ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid var(--s-divider, #d6dee6)",
+                background: "white"
+              }}
+            >
+              <div style={{ fontWeight: 900 }}>Quick-add from Unmapped (from Upload rollups)</div>
+              <div style={{ opacity: 0.85, marginTop: 6 }}>
+                If you see nothing here: your ingest is not writing rollups yet (fix below).
+              </div>
+
+              {unmappedSuggestions.length === 0 ? (
+                <div style={{ marginTop: 10, opacity: 0.85 }}>No unmapped suggestions yet.</div>
+              ) : (
+                <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                  {unmappedSuggestions.map((x) => (
+                    <div
+                      key={x.merchantNorm}
+                      style={{
+                        border: "1px solid #d6dee6",
+                        borderRadius: 10,
+                        padding: 10,
+                        display: "flex",
+                        gap: 10,
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        alignItems: "center"
+                      }}
+                    >
+                      <div style={{ minWidth: 240 }}>
+                        <div style={{ fontWeight: 900, fontFamily: "monospace" }}>{x.merchantNorm}</div>
+                        <div style={{ opacity: 0.85, marginTop: 4 }}>
+                          count (approx): <b>{x.count}</b>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <select
+                          defaultValue="Consumer & Retail"
+                          onChange={(e) =>
+                            setNewRule((p) => ({ ...p, merchantNorm: x.merchantNorm, sector: e.target.value, sample: x.sample || "" }))
+                          }
+                          style={{ padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                        >
+                          {SECTORS.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            upsertRule({ merchantNorm: x.merchantNorm, sector: "Consumer & Retail", ticker: "", sample: x.sample || "" })
+                          }
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--s-divider, #d6dee6)",
+                            background: "var(--s-ice, #eaf2f8)",
+                            fontWeight: 900,
+                            cursor: busy ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          Quick add
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setNewRule({ merchantNorm: x.merchantNorm, sector: "Consumer & Retail", ticker: "", sample: x.sample || "" })}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--s-divider, #d6dee6)",
+                            background: "white",
+                            fontWeight: 900,
+                            cursor: busy ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          Prefill form
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                border: "1px solid var(--s-divider, #d6dee6)",
+                background: "white"
+              }}
+            >
+              <div style={{ fontWeight: 900 }}>All Rules</div>
+
+              <div style={{ marginTop: 10 }}>
+                <input
+                  value={ruleQuery}
+                  onChange={(e) => setRuleQuery(e.target.value)}
+                  placeholder="Search merchantNorm / sector / ticker"
+                  style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #d6dee6" }}
+                />
+              </div>
+
+              {filteredRules.length === 0 ? (
+                <div style={{ marginTop: 10, opacity: 0.85 }}>No rules yet.</div>
+              ) : (
+                <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                  {filteredRules.slice(0, 250).map((r) => (
+                    <div
+                      key={r.id}
+                      style={{
+                        border: "1px solid #d6dee6",
+                        borderRadius: 10,
+                        padding: 10,
+                        display: "flex",
+                        gap: 10,
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        alignItems: "center"
+                      }}
+                    >
+                      <div style={{ minWidth: 280 }}>
+                        <div style={{ fontWeight: 900, fontFamily: "monospace" }}>{r.merchantNorm}</div>
+                        <div style={{ opacity: 0.85, marginTop: 4 }}>
+                          sector: <b>{r.sector || "—"}</b>
+                          {" · "}
+                          ticker: <b>{r.ticker || "—"}</b>
+                        </div>
+                        {r.sample ? (
+                          <div style={{ opacity: 0.8, marginTop: 4, fontSize: 12 }}>
+                            sample: <span style={{ fontFamily: "monospace" }}>{r.sample}</span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            setNewRule({
+                              merchantNorm: r.merchantNorm || "",
+                              sector: r.sector || "Consumer & Retail",
+                              ticker: r.ticker || "",
+                              sample: r.sample || ""
+                            })
+                          }
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--s-divider, #d6dee6)",
+                            background: "white",
+                            fontWeight: 900,
+                            cursor: busy ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => deleteRule(r.merchantNorm)}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            border: "1px solid #fecaca",
+                            background: "#fef2f2",
+                            color: "#991b1b",
+                            fontWeight: 900,
+                            cursor: busy ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Card>

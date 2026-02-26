@@ -1,0 +1,171 @@
+PWD=C:\Users\birlm\Desktop\sphere-mvp
+
+=== NODE ===
+v24.12.0
+11.6.2
+
+=== NETLIFY ===
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# Your React SPA routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+=== FUNCTIONS ===
+_shared
+admin-activate-upload.cjs
+admin-delete-merchant-rule.cjs
+admin-delete-upload.cjs
+admin-list-merchant-rules.cjs
+admin-list-uploads.cjs
+admin-review-upload.cjs
+admin-unflag-upload.cjs
+admin-upsert-merchant-rule.cjs
+client-log.js
+community-flow.cjs
+create-checkout.js
+ingest-upload.cjs
+market-refresh.cjs
+market.cjs
+public-merchant-rules.cjs
+rebuild-flow-window.cjs
+spherical-ai.cjs
+stripe-webhook.cjs
+whoami.cjs
+
+=== SRC FILES ===
+src/App.css
+src/App.jsx
+src/assets/react.svg
+src/assets/sphere-logo.png
+src/components/AlignmentSnapshotDrip.jsx
+src/components/AutoInvestPreview.jsx
+src/components/CommunityBlog.jsx
+src/components/ErrorBoundary.jsx
+src/components/MarketPulse.jsx
+src/components/MonthlyDrip.jsx
+src/components/MonthlyFlow.jsx
+src/components/PaperPortfolio.jsx
+src/components/SectionUI.jsx
+src/components/SectorMapper.jsx
+src/components/SphericalFeed.jsx
+src/components/TimeframeControls.jsx
+src/components/TransactionUploader.jsx
+src/components/ui/UiKit.jsx
+src/components/UnlockPanel.jsx
+src/firebase.js
+src/hooks/useUserStats.js
+src/index.css
+src/lib/writeWaitlist.js
+src/main.jsx
+src/pages/Admin.jsx
+src/pages/Home.jsx
+src/pages/Login.jsx
+src/utils/batchQuality.js
+src/utils/changeDetect.js
+src/utils/clientLog.js
+src/utils/dynamicMerchantRules.js
+src/utils/entitlements.js
+src/utils/fetchJsonSafe.js
+src/utils/fetchWithAuth.js
+src/utils/flowEligibility.js
+src/utils/mappings.js
+src/utils/merchantSectorMap.js
+src/utils/normalizeTx.js
+src/utils/pickTop10WithTwoPerSector.js
+src/utils/runnerEngine.js
+src/utils/runnersChange.js
+src/utils/sectorRollup.js
+src/utils/timeWindow.js
+src/utils/userDoc.js
+src/utils/userStats.js
+
+=== ENTITLEMENTS SEARCH ===
+src/pages/Admin.jsx:216:        // Explicit entitlement truth
+src/pages/Admin.jsx:217:        entitlements: {
+src/pages/Home.jsx:15:import { hasFlowAccess as computeHasFlowAccess } from "../utils/entitlements";
+src/pages/Home.jsx:291:  // ✅ SINGLE TRUTH: entitlements.flow.active ?? grace ?? legacy flowAccess (admin override)
+src/utils/entitlements.js:1:// FILE: src/utils/entitlements.js
+src/utils/entitlements.js:20: * 2) If entitlements.flow.active is boolean, use it.
+src/utils/entitlements.js:28:  const ent = u.entitlements?.flow || null;
+src/utils/userDoc.js:13: * - entitlements.flow (new explicit truth)
+src/utils/userDoc.js:40:      // Explicit entitlement truth (used by webhook/admin; safer long-term)
+src/utils/userDoc.js:41:      entitlements: {
+netlify/functions/stripe-webhook.cjs:2:// Stripe webhook -> server-truth entitlement writes.
+netlify/functions/stripe-webhook.cjs:4:// - Entitlement truth lives in users/{uid}.entitlements.flow (and legacy users/{uid}.flowAccess kept in sync)
+netlify/functions/stripe-webhook.cjs:95:// Writes one consistent entitlement shape
+netlify/functions/stripe-webhook.cjs:96:function entitlementPatch({ active, status, source, graceUntil = null }) {
+netlify/functions/stripe-webhook.cjs:98:    entitlements: {
+netlify/functions/stripe-webhook.cjs:154:    // Store stripe IDs only; do NOT grant entitlement here.
+netlify/functions/stripe-webhook.cjs:178:          entitlement: { pending: true, source: "checkout.session.completed" },
+netlify/functions/stripe-webhook.cjs:205:            ...entitlementPatch({
+netlify/functions/stripe-webhook.cjs:210:              graceUntil: entitled ? null : (prev?.entitlements?.flow?.graceUntil || null)
+netlify/functions/stripe-webhook.cjs:212:            entitlement: { pending: false, source: "customer.subscription.updated", status, decidedAt: now() },
+netlify/functions/stripe-webhook.cjs:250:            ...entitlementPatch({
+netlify/functions/stripe-webhook.cjs:256:            entitlement: { pending: false, source: "customer.subscription.deleted", status: "canceled", decidedAt: now() },
+netlify/functions/stripe-webhook.cjs:292:            ...entitlementPatch({
+netlify/functions/stripe-webhook.cjs:335:            ...entitlementPatch({
+
+=== STRIPE SEARCH ===
+src/utils/userDoc.js:44:          source: "none",      // "stripe" | "admin" | "none"
+netlify/functions/create-checkout.js:2:import Stripe from "stripe";
+netlify/functions/create-checkout.js:61:    const stripe = new Stripe(STRIPE_SECRET_KEY, {
+netlify/functions/create-checkout.js:84:    const session = await stripe.checkout.sessions.create({
+netlify/functions/stripe-webhook.cjs:1:// FILE: netlify/functions/stripe-webhook.cjs
+netlify/functions/stripe-webhook.cjs:3:// - Idempotent via stripe_events/{eventId}
+netlify/functions/stripe-webhook.cjs:7:const Stripe = require("stripe");
+netlify/functions/stripe-webhook.cjs:10:const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+netlify/functions/stripe-webhook.cjs:47:    headers["stripe-signature"] ||
+netlify/functions/stripe-webhook.cjs:57:async function markEventOnce(stripeEvent) {
+netlify/functions/stripe-webhook.cjs:58:  const ref = db.collection("stripe_events").doc(stripeEvent.id);
+netlify/functions/stripe-webhook.cjs:63:      type: stripeEvent.type,
+netlify/functions/stripe-webhook.cjs:64:      created: stripeEvent.created || null,
+netlify/functions/stripe-webhook.cjs:65:      livemode: !!stripeEvent.livemode,
+netlify/functions/stripe-webhook.cjs:79:    .where("stripe.customerId", "==", customerId)
+netlify/functions/stripe-webhook.cjs:102:        source: String(source || "stripe"),
+netlify/functions/stripe-webhook.cjs:118:  if (!sig) return { statusCode: 400, body: "Missing stripe-signature header" };
+netlify/functions/stripe-webhook.cjs:125:  let stripeEvent;
+netlify/functions/stripe-webhook.cjs:127:    stripeEvent = stripe.webhooks.constructEvent(
+netlify/functions/stripe-webhook.cjs:140:      const live = !!stripeEvent.livemode;
+netlify/functions/stripe-webhook.cjs:143:        console.warn("Stripe livemode mismatch:", { live, expectLive, type: stripeEvent.type });
+netlify/functions/stripe-webhook.cjs:149:    const first = await markEventOnce(stripeEvent);
+netlify/functions/stripe-webhook.cjs:154:    // Store stripe IDs only; do NOT grant entitlement here.
+netlify/functions/stripe-webhook.cjs:156:    if (stripeEvent.type === "checkout.session.completed") {
+netlify/functions/stripe-webhook.cjs:157:      const session = stripeEvent.data.object;
+netlify/functions/stripe-webhook.cjs:165:          stripe: {
+netlify/functions/stripe-webhook.cjs:190:    if (stripeEvent.type === "customer.subscription.updated") {
+netlify/functions/stripe-webhook.cjs:191:      const sub = stripeEvent.data.object;
+netlify/functions/stripe-webhook.cjs:213:            stripe: {
+netlify/functions/stripe-webhook.cjs:214:              ...(prev.stripe || {}),
+netlify/functions/stripe-webhook.cjs:215:              customerId: customerId || prev?.stripe?.customerId || null,
+netlify/functions/stripe-webhook.cjs:216:              subscriptionId: sub?.id || prev?.stripe?.subscriptionId || null,
+netlify/functions/stripe-webhook.cjs:237:    if (stripeEvent.type === "customer.subscription.deleted") {
+netlify/functions/stripe-webhook.cjs:238:      const sub = stripeEvent.data.object;
+netlify/functions/stripe-webhook.cjs:257:            stripe: {
+netlify/functions/stripe-webhook.cjs:258:              ...(prev.stripe || {}),
+netlify/functions/stripe-webhook.cjs:259:              customerId: customerId || prev?.stripe?.customerId || null,
+netlify/functions/stripe-webhook.cjs:260:              subscriptionId: sub?.id || prev?.stripe?.subscriptionId || null,
+netlify/functions/stripe-webhook.cjs:275:    if (stripeEvent.type === "invoice.payment_failed") {
+netlify/functions/stripe-webhook.cjs:276:      const inv = stripeEvent.data.object;
+netlify/functions/stripe-webhook.cjs:298:            stripe: {
+netlify/functions/stripe-webhook.cjs:299:              ...(prev.stripe || {}),
+netlify/functions/stripe-webhook.cjs:322:    if (stripeEvent.type === "invoice.payment_succeeded") {
+netlify/functions/stripe-webhook.cjs:323:      const inv = stripeEvent.data.object;
+netlify/functions/stripe-webhook.cjs:341:            stripe: {
+netlify/functions/stripe-webhook.cjs:342:              ...(prev.stripe || {}),
+netlify/functions/stripe-webhook.cjs:344:              lastInvoiceId: inv?.id || prev?.stripe?.lastInvoiceId || null,
+netlify/functions/stripe-webhook.cjs:366:    if (stripeEvent.type === "charge.refunded") {
+netlify/functions/stripe-webhook.cjs:367:      const ch = stripeEvent.data.object;
+
+=== ERROR BOUNDARY SEARCH ===
+src/components/ErrorBoundary.jsx:1:// FILE: src/components/ErrorBoundary.jsx
+src/components/ErrorBoundary.jsx:5:export default class ErrorBoundary extends React.Component {
+src/components/ErrorBoundary.jsx:24:      console.error("ErrorBoundary onError hook failed:", e);
+src/main.jsx:5:import ErrorBoundary from "./components/ErrorBoundary.jsx";
+src/main.jsx:22:    <ErrorBoundary onError={logReactBoundary}>
+src/main.jsx:24:    </ErrorBoundary>

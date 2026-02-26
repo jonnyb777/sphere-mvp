@@ -177,32 +177,56 @@ function buildPulseNarrative({
  * - Netlify Dev (8888) (relative path works)
  * - Vite dev (5173/5174) where relative path returns index.html (HTML) -> retry 8888
  */
-async function fetchJsonNetlifyFunction(pathWithQuery) {
+async function fetchJsonNetlifyFunction(pathWithQuery, { requireAuth = false } = {}) {
   const isLocalhost =
     window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1";
   const port = String(window?.location?.port || "");
 
+  // Build candidate URLs (works for prod + netlify dev + vite dev)
   const tryUrls = [pathWithQuery];
   if (isLocalhost && port !== "8888") {
     tryUrls.push(`http://localhost:8888${pathWithQuery}`);
+  }
+
+  // Try to get Firebase ID token (only if logged in)
+  let token = null;
+  try {
+    // IMPORTANT: update this import path based on where this helper lives
+    // If this helper is inside MarketPulse.jsx, import { auth } from "../firebase"
+    // If it is inside a different folder, adjust the relative path accordingly.
+    const { auth } = await import("../firebase");
+    const user = auth?.currentUser || null;
+    token = user ? await user.getIdToken() : null;
+  } catch (e) {
+    // no-op: token remains null
+  }
+
+  if (requireAuth && !token) {
+    throw new Error("Not logged in (no Firebase token available).");
   }
 
   let lastErr = null;
 
   for (const url of tryUrls) {
     try {
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(url, {
+        cache: "no-store",
+        headers: token
+  ? { Authorization: `Bearer ${token}`, "content-type": "application/json" }
+  : { "content-type": "application/json" }
+      });
+
       const ct = (res.headers.get("content-type") || "").toLowerCase();
       const text = await res.text();
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status} for ${url}\nFirst chars: ${text.slice(0, 120)}`);
+        throw new Error(`HTTP ${res.status} for ${url}\nFirst chars: ${text.slice(0, 180)}`);
       }
 
       const looksHtml = ct.includes("text/html") || text.trim().toLowerCase().startsWith("<!doctype html");
       if (looksHtml) {
         throw new Error(
-          `Non-JSON response for ${url}\nContent-Type: ${ct || "unknown"}\nFirst chars: ${text.slice(0, 120)}`
+          `Non-JSON response for ${url}\nContent-Type: ${ct || "unknown"}\nFirst chars: ${text.slice(0, 180)}`
         );
       }
 
@@ -289,16 +313,24 @@ export default function MarketPulse({
   // NEW: non-fatal missing ticker note
   const [missingNote, setMissingNote] = useState("");
 
+  // ✅ Re-add: raw top spend sectors (you were referencing it but it didn't exist)
   const spendSectorsRaw = useMemo(
     () => (topSpendSectors || []).filter(Boolean).slice(0, 5),
     [topSpendSectors]
   );
-
+  
+  // ✅ Rolled-up buckets used for mapping into sectorUniverse
   const spendSectorsRolled = useMemo(() => {
     const rolled = spendSectorsRaw.map((s) => rollUpSector(s)).filter(Boolean);
     const cleaned = rolled.filter((s) => s !== "Other / Unmapped");
     return uniq(cleaned.length ? cleaned : rolled);
   }, [spendSectorsRaw]);
+
+  // ✅ Debug logs (single place, after vars exist)
+  useEffect(() => {
+    console.log("spendSectorsRaw", spendSectorsRaw);
+    console.log("spendSectorsRolled", spendSectorsRolled);
+  }, [spendSectorsRaw, spendSectorsRolled]);
 
   const tickerToRolledSector = useMemo(() => {
     const map = {};
@@ -361,7 +393,9 @@ export default function MarketPulse({
         const etfMissing = Array.isArray(etfJson.missing) ? etfJson.missing : [];
 
         // only keep valid numeric returns
-        const etfItems = etfItemsRaw.filter((x) => typeof x.return30d === "number" && Number.isFinite(x.return30d));
+        const etfItems = etfItemsRaw
+          .map((x) => ({ ...x, return30d: Number(x.return30d) }))
+          .filter((x) => Number.isFinite(x.return30d));
         etfItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
         const leaders = etfItems.slice(0, 5).map((x) => ({
@@ -386,7 +420,9 @@ export default function MarketPulse({
           const uniItemsRaw = Array.isArray(uniJson.items) ? uniJson.items : [];
           const uniMissing = Array.isArray(uniJson.missing) ? uniJson.missing : [];
 
-          const uniItems = uniItemsRaw.filter((x) => typeof x.return30d === "number" && Number.isFinite(x.return30d));
+          const uniItems = uniItemsRaw
+            .map((x) => ({ ...x, return30d: Number(x.return30d) }))
+            .filter((x) => Number.isFinite(x.return30d));
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
           const labeledSorted = uniItems.map((x) => ({

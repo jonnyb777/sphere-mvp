@@ -1,240 +1,116 @@
 // FILE: src/App.jsx
-import { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "./firebase";
+import { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, onSnapshot } from "firebase/firestore";
+
+import "./App.css";
+
+import { auth, db } from "./firebase";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
-import { ensureUserDoc, readUserDoc } from "./lib/ensureUserDoc";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "./firebase";
-
-function parseAdminEmails() {
-  const raw = (import.meta.env.VITE_ADMIN_EMAILS || "").trim();
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
+import { ensureUserDoc } from "./utils/userDoc";
+import { ensureUserStats, bumpSession } from "./utils/userStats";
 
 export default function App() {
-  const [booting, setBooting] = useState(true);
+  // authReady prevents "Login flash" while Firebase restores session
+  const [authReady, setAuthReady] = useState(false);
+
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
-  const [bootErr, setBootErr] = useState("");
+
+  // bootingUserDoc covers the Firestore user doc subscription
+  const [bootingUserDoc, setBootingUserDoc] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setFirebaseUser(u);
-      setBootErr("");
+    let unsubUserDoc = null;
 
-      if (!u) {
-        setUserDoc(null);
-        setBooting(false);
+    const unsubAuth = onAuthStateChanged(auth, async (currentUser) => {
+      // ✅ auth is now decided (even if null)
+      setAuthReady(true);
+
+      setFirebaseUser(currentUser || null);
+      setUserDoc(null);
+
+      // clean up prior user doc subscription
+      if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+      }
+
+      // logged out
+      if (!currentUser) {
+        setBootingUserDoc(false);
         return;
       }
 
-      try {
-        // Create/update users/{uid}
-        await ensureUserDoc(u);
+      // logged in → boot user doc
+      setBootingUserDoc(true);
 
-        // Read server-backed truth (flowAccess/role/etc)
-        const docData = await readUserDoc(u.uid);
-        setUserDoc(docData || null);
+      try {
+        // Ensure Firestore user document exists (first login defaults)
+        await ensureUserDoc(currentUser);
+        
+        // NEW: ensure userStats exists + count a session
+        await ensureUserStats(currentUser.uid);
+        await bumpSession(currentUser.uid);
+
+        // Live subscribe so flowAccess / flowConsent updates reflect immediately
+        const ref = doc(db, "users", currentUser.uid);
+        unsubUserDoc = onSnapshot(
+          ref,
+          (snap) => {
+            setUserDoc(snap.exists() ? snap.data() : null);
+            setBootingUserDoc(false);
+          },
+          (err) => {
+            console.error("users/{uid} onSnapshot error:", err);
+            setUserDoc(null);
+            setBootingUserDoc(false);
+          }
+        );
       } catch (e) {
-        console.error("Auth -> Firestore user bootstrap error:", e);
-        setUserDoc(null);
-        setBootErr(String(e?.message || e));
-      } finally {
-        setBooting(false);
+        console.error("ensureUserDoc error:", e);
+        setBootingUserDoc(false);
       }
     });
 
-    return () => unsub();
+    return () => {
+      if (unsubUserDoc) unsubUserDoc();
+      unsubAuth();
+    };
   }, []);
 
-  const userCtx = useMemo(() => {
-    if (!firebaseUser) return null;
-    return {
-      uid: firebaseUser.uid,
-      email: firebaseUser.email,
-      role: userDoc?.role || "user",
-      flowAccess: !!userDoc?.flowAccess,
-      canPost: userDoc?.canPost !== false
-    };
-  }, [firebaseUser, userDoc]);
-
-  const adminEmails = useMemo(() => parseAdminEmails(), []);
-  const isAdmin = useMemo(() => {
-    const email = String(userCtx?.email || "").toLowerCase();
-    return userCtx?.role === "admin" || (email && adminEmails.includes(email));
-  }, [userCtx, adminEmails]);
-
-  const debugString = useMemo(() => {
-    const u = firebaseUser;
-    const hasUser = !!u;
-    const hasDoc = !!userDoc;
-    const flowAccess = !!userDoc?.flowAccess;
-    const role = userDoc?.role || "user";
-    return [
-      `hasUser=${hasUser}`,
-      `uid=${u?.uid || "none"}`,
-      `email=${u?.email || "none"}`,
-      `userDoc=${hasDoc ? "yes" : "no"}`,
-      `flowAccess=${flowAccess}`,
-      `role=${role}`,
-      `bootErr=${bootErr ? bootErr.slice(0, 140) : "none"}`
-    ].join(" · ");
-  }, [firebaseUser, userDoc, bootErr]);
-
-  if (booting) {
+  // ✅ Prevent the login page from flashing while auth is still restoring
+  if (!authReady) {
     return (
-      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-        <div style={{ fontWeight: 900, color: "var(--s-primary, #123764)" }}>Loading Sphere…</div>
+      <div style={{ padding: "1rem", fontFamily: "system-ui, sans-serif" }}>
+        Loading Sphere…
       </div>
     );
   }
 
+  // Not logged in
   if (!firebaseUser) return <Login />;
 
-  // tighter pill (oval, subtle border, soft bg)
-  const leftPillStyle = {
-    display: "inline-flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: 2,
-    padding: "5px 9px",
-    borderRadius: 999,
-    border: "1px solid #eaeaea",
-    background: "#f7f7f7",
-    color: "#333",
-    boxShadow: "0 3px 8px rgba(0,0,0,0.035)"
+  // Logged in but still booting userDoc
+  if (bootingUserDoc) {
+    return (
+      <div style={{ padding: "1rem", fontFamily: "system-ui, sans-serif" }}>
+        Loading your Sphere profile…
+      </div>
+    );
+  }
+
+  // If doc failed to load, still render Home with minimal safe user shape
+  const safeUser = {
+    ...(userDoc || {}),
+    uid: (userDoc && userDoc.uid) || firebaseUser.uid,
+    email: (userDoc && userDoc.email) || firebaseUser.email,
+
+    // ✅ force booleans so UI can rely on them
+    flowAccess: !!(userDoc && userDoc.flowAccess),
+    flowConsent: !!(userDoc && userDoc.flowConsent)
   };
 
-  const btnStyle = (variant) => ({
-    padding: "7px 9px",
-    borderRadius: 10,
-    border: "1px solid #D6DEE6",
-    background: variant === "soft" ? "#EAF2F8" : "white",
-    fontWeight: 900,
-    cursor: "pointer"
-  });
-
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--s-white, #fff)" }}>
-      {/* Top status / debug bar */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 10,
-          padding: "8px 10px",
-          borderBottom: "1px solid #D6DEE6",
-          background: "white",
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between"
-        }}
-      >
-        {/* Left: pill with signed-in + Flow */}
-        <div style={leftPillStyle}>
-          <div style={{ fontWeight: 800, fontSize: 12.5, color: "#123764", lineHeight: 1.12 }}>
-            Signed in as{" "}
-            <span style={{ color: "#1F2B3A", fontWeight: 800 }}>
-              {userCtx?.email || "unknown"}
-            </span>
-          </div>
-
-          <div style={{ fontSize: 11.25, opacity: 0.85, lineHeight: 1.12 }}>
-            {userCtx?.flowAccess ? <span>Flow: ✅ Unlocked</span> : <span>Flow: 🔒 Locked</span>}
-          </div>
-
-          {bootErr ? (
-            <div style={{ fontSize: 11.5, color: "#991b1b", fontWeight: 800, lineHeight: 1.2 }}>
-              Bootstrap warning: {bootErr}
-            </div>
-          ) : null}
-        </div>
-
-        {/* Right: admin-only debug + logout */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {isAdmin ? (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  try {
-                    console.log("SPHERE DEBUG:", debugString);
-                    navigator.clipboard?.writeText?.(debugString);
-                    alert("Copied debug to clipboard (also logged in Console).");
-                  } catch {
-                    console.log("SPHERE DEBUG:", debugString);
-                    alert(debugString);
-                  }
-                }}
-                style={btnStyle("soft")}
-              >
-                Copy Debug
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const u = auth.currentUser;
-                    const token = u ? await u.getIdToken() : null;
-                    if (!token) return alert("No token. Log in first.");
-
-                    const res = await fetch("/.netlify/functions/whoami", {
-                      headers: { Authorization: `Bearer ${token}` }
-                    });
-                    const txt = await res.text();
-                    console.log("whoami:", res.status, txt);
-                    alert(`whoami status=${res.status}\n\n${txt}`);
-                  } catch (e) {
-                    console.error(e);
-                    alert(String(e?.message || e));
-                  }
-                }}
-                style={btnStyle("plain")}
-              >
-                Debug whoami()
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const uid = auth.currentUser?.uid;
-                    if (!uid) return alert("No user.");
-
-                    await setDoc(
-                      doc(db, "debugWrites", uid),
-                      { ok: true, at: serverTimestamp() },
-                      { merge: true }
-                    );
-
-                    alert("✅ Wrote debugWrites/{uid}. Check Firestore console.");
-                  } catch (e) {
-                    console.error(e);
-                    alert("❌ Firestore write failed: " + String(e?.message || e));
-                  }
-                }}
-                style={btnStyle("plain")}
-              >
-                Test Firestore write
-              </button>
-                          </>
-                        ) : null}
-
-          <button type="button" onClick={() => signOut(auth)} style={btnStyle("plain")}>
-            Log Out
-          </button>
-        </div>
-      </div>
-
-      <Home user={userCtx} firebaseUser={firebaseUser} />
-    </div>
-  );
+  return <Home user={safeUser} firebaseUser={firebaseUser} />;
 }
