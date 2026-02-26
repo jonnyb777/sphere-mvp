@@ -1,8 +1,11 @@
-// FILE: firestore.rules
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // =============================
+    // BASIC HELPERS
+    // =============================
     function signedIn() {
       return request.auth != null;
     }
@@ -16,45 +19,109 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // -----------------------------
+    // Owner-writeable keys for users/{uid}
+    function ownerWritableUserFields() {
+      return [
+        "email",
+        "lastLoginAt",
+        "flowConsent",
+        "canPost",
+        "onboardingComplete",
+        "updatedAt"
+      ];
+    }
+
+    // Owner-create keys for users/{uid}
+    // (lets you set basic identity + timestamps without letting users self-grant access)
+    function ownerCreatableUserFields() {
+  return [
+    "uid",
+    "email",
+    "createdAt",
+    "lastLoginAt",
+    "flowConsent",
+    "canPost",
+    "onboardingComplete",
+    "updatedAt",
+
+    // allow “default placeholders” on first create only
+    "role",
+    "flowAccess",
+    "entitlements"
+  ];
+}
+
+    // =============================
     // USERS
-    // -----------------------------
+    // =============================
     match /users/{uid} {
+
+      // Owner or admin can read
       allow read: if isOwner(uid) || isAdmin();
 
-      // Allow first-login doc creation
-      allow create: if isOwner(uid);
+      // Owner can create their own doc (safe shape only)
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(ownerCreatableUserFields());
 
-      // ✅ Owner can only change safe fields
-      // IMPORTANT: must NOT also require "role/flowAccess/etc == resource.data.*"
-      // because those fields might not exist yet on first writes or older docs.
-      allow update: if isOwner(uid)
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-          "email",
-          "lastLoginAt",
-          "flowConsent",
-          "canPost",
-          "onboardingComplete",
-          "updatedAt"
-        ]);
+      // Owner can update ONLY safe fields
+      allow update: if
+        (
+          isOwner(uid)
+          && request.resource.data.diff(resource.data)
+               .changedKeys()
+               .hasOnly(ownerWritableUserFields())
+        )
+        || isAdmin();
 
-      // ✅ Admin can update anything
-      allow update: if isAdmin();
-
-      // Only admin can delete user docs
+      // Only admin may delete user docs
       allow delete: if isAdmin();
     }
 
-    // -----------------------------
-    // ADMINS
-    // -----------------------------
-    match /admins/{uid} {
-      allow read, write: if isAdmin();
+    // =============================
+    // USER STATS (TOP-LEVEL)
+    // =============================
+    match /userStats/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly([
+          "uid",
+          "createdAt",
+          "updatedAt",
+          "uploads",
+          "sessions",
+          "streak",
+          "milestones"
+        ]);
+
+      // Owner can update only these keys
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "updatedAt",
+          "uploads",
+          "sessions",
+          "streak",
+          "milestones"
+        ]);
+
+      allow update, delete: if isAdmin();
     }
 
-    // -----------------------------
-    // UPLOADS + TX
-    // -----------------------------
+    // =============================
+    // ADMINS COLLECTION
+    // =============================
+    match /admins/{uid} {
+
+  // Allow a signed-in user to read their own admin marker
+  allow read: if signedIn() && request.auth.uid == uid;
+
+  // Never allow client to grant admin
+  allow create, update, delete: if false;
+}
+
+    // =============================
+    // USER UPLOAD DATA
+    // =============================
     match /uploads/{uid}/{docPath=**} {
       allow read: if isOwner(uid) || isAdmin();
       allow write: if isAdmin();
@@ -65,9 +132,9 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // -----------------------------
-    // FLOW (public read, admin write)
-    // -----------------------------
+    // =============================
+    // FLOW DATA (PUBLIC READ)
+    // =============================
     match /flow_signals/{id} {
       allow read: if true;
       allow write: if isAdmin();
@@ -78,43 +145,75 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // -----------------------------
+    // =============================
     // MERCHANT RULES
-    // -----------------------------
+    // =============================
     match /merchant_rules/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // -----------------------------
+    // =============================
     // WAITLIST
-    // -----------------------------
+    // =============================
     match /waitlist/{id} {
       allow create: if true;
       allow read, update, delete: if isAdmin();
     }
 
-    // -----------------------------
+    // =============================
     // POSTS
-    // -----------------------------
+    // =============================
     match /posts/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
     match /posts_pending/{id} {
-      allow create: if signedIn();
+
+      // Anyone signed-in can submit, but only as "pending"
+      allow create: if signedIn()
+        && request.resource.data.status == "pending"
+        && request.resource.data.authorEmail == request.auth.token.email
+        && request.resource.data.keys().hasOnly([
+          "title",
+          "body",
+          "tag",
+          "authorEmail",
+          "authorName",
+          "createdAt",
+          "status",
+          "source",
+          "dedupeKey",
+          "window"
+        ]);
+
       allow read, update, delete: if isAdmin();
     }
 
-    // -----------------------------
-    // STRIPE EVENTS (admin only)
-    // -----------------------------
+    // =============================
+    // STRIPE EVENTS
+    // =============================
     match /stripe_events/{id} {
       allow read, write: if isAdmin();
     }
 
-    // Default deny
+    // =============================
+    // MARKET CACHE
+    // =============================
+    match /market_cache/{windowKey} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /tickers/{ticker} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    // =============================
+    // DEFAULT DENY
+    // =============================
     match /{document=**} {
       allow read, write: if false;
     }
