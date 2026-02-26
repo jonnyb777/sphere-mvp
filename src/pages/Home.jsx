@@ -19,7 +19,8 @@ import { SectionBand, usePersistedBool, UI, Badge } from "../components/SectionU
 import sphereLogo from "../assets/sphere-logo.png";
 
 import { doc, getDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { auth, db } from "../firebase";
+import { signOut } from "firebase/auth";
 
 function Section({ storageKey, label, defaultOpen = true, children }) {
   const [open, setOpen] = usePersistedBool(storageKey, defaultOpen);
@@ -264,6 +265,15 @@ export default function Home({ user, firebaseUser }) {
   // ✅ Admin = user has a Firestore doc at admins/{uid}
   const [isAdmin, setIsAdmin] = useState(false);
 
+    async function handleLogout() {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error("Logout failed:", e);
+      alert(e?.message || "Logout failed");
+    }
+  }
+
   useEffect(() => {
     let alive = true;
 
@@ -405,29 +415,57 @@ export default function Home({ user, firebaseUser }) {
     return base;
   }, [hasFlowAccess, simpleMode, isAdmin]);
 
-  return (
-    <PageShell
-      title={
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img
-            src={sphereLogo}
-            alt="Sphere"
-            style={{
-              height: 64,
-              width: "auto",
-              borderRadius: 10,
-              boxShadow: "var(--s-shadow, 0 8px 24px rgba(18,55,100,0.08))"
-            }}
-          />
-          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
-            <div style={{ fontWeight: 900, color: "var(--s-primary, #123764)" }}>Sphere</div>
-            <div style={{ fontSize: 13, opacity: 0.85, color: "var(--s-text, #1F2B3A)" }}>
-              Turn your daily spending into smart investing
-            </div>
+return (
+  <PageShell
+    title={
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <img
+          src={sphereLogo}
+          alt="Sphere"
+          style={{
+            height: 64,
+            width: "auto",
+            borderRadius: 10,
+            boxShadow: "var(--s-shadow, 0 8px 24px rgba(18,55,100,0.08))"
+          }}
+        />
+        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
+          <div style={{ fontWeight: 900, color: "var(--s-primary, #123764)" }}>Sphere</div>
+          <div style={{ fontSize: 13, opacity: 0.85, color: "var(--s-text, #1F2B3A)" }}>
+            Turn your daily spending into smart investing
           </div>
         </div>
-      }
-    >
+      </div>
+    }
+    rightSlot={
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingRight: 8 }}>
+        <div style={{ fontSize: 12, opacity: 0.85 }}>
+          {user?.email ? (
+            <>Logged in as: <b>{user.email}</b></>
+          ) : (
+            <>Guest</>
+          )}
+        </div>
+
+        {user?.uid ? (
+          <button
+            type="button"
+            onClick={handleLogout}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: `1px solid ${UI.BAND_BORDER}`,
+              background: "white",
+              fontWeight: 900,
+              cursor: "pointer"
+            }}
+          >
+            Log out
+          </button>
+        ) : null}
+      </div>
+    }
+  >
       <UpgradeModal
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
@@ -598,7 +636,12 @@ export default function Home({ user, firebaseUser }) {
       {/* SPHERICAL */}
       {activeTab === "spherical" && (
         <Section label="Spherical — Community Feed" storageKey="home:spherical" defaultOpen={true}>
-          <SphericalFeed userEmail={user?.email || ""} onUpgradeClick={handleUpgradeClick} botContext={sphericalBotContext} />
+          <SphericalFeed
+  userEmail={user?.email || ""}
+  userUid={user?.uid || ""}
+  onUpgradeClick={handleUpgradeClick}
+  botContext={sphericalBotContext}
+/>
         </Section>
       )}
 

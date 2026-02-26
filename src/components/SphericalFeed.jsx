@@ -219,12 +219,15 @@ export default function SphericalFeed({ userEmail = "", userUid = "", onUpgradeC
         status: isAdmin ? "published" : "pending"
       });
 
-      setTitle("");
-setBody("");
+            setTitle("");
+      setBody("");
 
-try {
-  if (userUid) await markFirstPost(userUid);
-} catch {}
+      // Milestone: first post (safe, non-blocking)
+      if (userUid) {
+        markFirstPost(userUid).catch((e) => {
+          if (import.meta?.env?.DEV) console.warn("markFirstPost failed:", e);
+        });
+      }
 
       if (isAdmin) await loadInitial();
       else alert("✅ Submitted! Your post is pending approval.");
