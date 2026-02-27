@@ -20,6 +20,11 @@ const firebaseConfig = {
   messagingSenderId: required("VITE_FIREBASE_MESSAGING_SENDER_ID"),
   appId: required("VITE_FIREBASE_APP_ID")
 };
+// TEMP DEBUG (remove after)
+console.log("🔥 Firebase config (client)", {
+  projectId: firebaseConfig.projectId,
+  authDomain: firebaseConfig.authDomain
+});
 
 const app = initializeApp(firebaseConfig);
 
