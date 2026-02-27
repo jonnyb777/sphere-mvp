@@ -260,6 +260,15 @@ function FlowGate({ hasAccess, onUpgradeClick, children }) {
 }
 
 export default function Home({ user, firebaseUser }) {
+
+  // ===== DEBUG START =====
+  try {
+    console.log("Firebase projectId:", db?.app?.options?.projectId);
+    console.log("Auth UID:", firebaseUser?.uid);
+    console.log("Auth email:", firebaseUser?.email);
+  } catch {}
+  // ===== DEBUG END =====
+
   const [activeTab, setActiveTab] = useState("drip");
 
   // ✅ Admin = user has a Firestore doc at admins/{uid}

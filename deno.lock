@@ -21,6 +21,7 @@
         "npm:firebase-admin@^13.6.0",
         "npm:firebase@^12.7.0",
         "npm:globals@^16.5.0",
+        "npm:openai@^6.25.0",
         "npm:react-dom@^19.2.0",
         "npm:react@^19.2.0",
         "npm:stripe@^20.1.2",
