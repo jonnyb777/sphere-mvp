@@ -21,6 +21,7 @@ import sphereLogo from "../assets/sphere-logo.png";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { signOut } from "firebase/auth";
+import InstallAppButton from "../components/InstallAppButton";
 
 function Section({ storageKey, label, defaultOpen = true, children }) {
   const [open, setOpen] = usePersistedBool(storageKey, defaultOpen);
@@ -450,11 +451,15 @@ return (
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingRight: 8 }}>
         <div style={{ fontSize: 12, opacity: 0.85 }}>
           {user?.email ? (
-            <>Logged in as: <b>{user.email}</b></>
+            <>
+              Logged in as: <b>{user.email}</b>
+            </>
           ) : (
             <>Guest</>
           )}
         </div>
+
+        <InstallAppButton />
 
         {user?.uid ? (
           <button
@@ -475,13 +480,12 @@ return (
       </div>
     }
   >
-      <UpgradeModal
-        open={upgradeOpen}
-        onClose={() => setUpgradeOpen(false)}
-        userEmail={user?.email || ""}
-        userUid={user?.uid || ""}
-      />
-
+    <UpgradeModal
+      open={upgradeOpen}
+      onClose={() => setUpgradeOpen(false)}
+      userEmail={user?.email || ""}
+      userUid={user?.uid || ""}
+    />
       <Tabs value={activeTab} onChange={setActiveTab} tabs={tabs} />
 
       {/* DRIP */}
