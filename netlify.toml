@@ -1,7 +1,6 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
-  functions = "netlify/functions"
+command = "npm run build"
+publish = "dist"
 
 # Your React SPA routing
 [[redirects]]
