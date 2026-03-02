@@ -1,6 +1,5 @@
 [build]
-command = "npm run build"
-publish = "dist"
+publish = "landing"
 
 # Your React SPA routing
 [[redirects]]
