@@ -189,6 +189,33 @@ function looksLikeRefund(desc, details) {
  * - spend => NEGATIVE
  * - refund => POSITIVE
  */
+function normalizeDateValue(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+
+  // Already ISO-ish: 2026-01-12
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  // US common: 1/12/2026 or 01/12/2026
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    let [, m, d, y] = slash;
+    if (y.length === 2) y = `20${y}`;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  const dt = new Date(s);
+  if (!Number.isNaN(dt.getTime())) {
+    return dt.toISOString().slice(0, 10);
+  }
+
+  return "";
+}
+
 function normalizeAnyRows(rows) {
   const arr = Array.isArray(rows) ? rows : [];
 
@@ -204,9 +231,24 @@ function normalizeAnyRows(rows) {
       const type = stripOuterQuotes(pick(r, ["type", "Type"])).trim();
 
       // Date: Posting Date most common
-      const date = stripOuterQuotes(
-        pick(r, ["date", "Date", "posting date", "Posting Date", "posted", "Posted", "posted_at", "PostedAt"])
-      ).trim();
+      const dateRaw = stripOuterQuotes(
+  pick(r, [
+    "date",
+    "Date",
+    "posting date",
+    "Posting Date",
+    "posted",
+    "Posted",
+    "posted_at",
+    "PostedAt",
+    "transaction date",
+    "Transaction Date",
+    "transactionDate",
+    "TransactionDate"
+  ])
+).trim();
+
+const date = normalizeDateValue(dateRaw);
 
       // Amount
       const amountRaw = pick(r, ["amount", "Amount", "value", "Value"]);
