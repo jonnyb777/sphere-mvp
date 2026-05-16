@@ -191,12 +191,64 @@ async function fetchWithTimeout(url, ms) {
   }
 }
 
-async function fetchCsv(ticker, timeoutMs = 9000) {
-  const t = ticker.includes(".") ? ticker : `${ticker}.us`;
-  const url = `https://stooq.com/q/d/l/?s=${t.toLowerCase()}&i=d`;
-  const res = await fetchWithTimeout(url, timeoutMs);
-  if (!res.ok) return null;
-  return await res.text();
+async function fetchPriceRows(ticker, timeoutMs = 12000) {
+  const symbol = String(ticker || "").toUpperCase().trim();
+
+  const twelveKey = String(process.env.TWELVE_DATA_API_KEY || "").trim();
+  if (twelveKey) {
+    try {
+      const url =
+        `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}` +
+        `&interval=1day&outputsize=5000&apikey=${encodeURIComponent(twelveKey)}`;
+
+      const res = await fetchWithTimeout(url, timeoutMs);
+      const json = await res.json();
+
+      if (Array.isArray(json.values)) {
+        const rows = json.values
+          .map((x) => ({
+            date: new Date(x.datetime),
+            close: Number(x.close)
+          }))
+          .filter((x) => !Number.isNaN(x.date.getTime()) && Number.isFinite(x.close))
+          .sort((a, b) => b.date - a.date);
+
+        if (rows.length) return { provider: "twelvedata", rows };
+      }
+    } catch {
+      // fall through to Alpha Vantage
+    }
+  }
+
+  const alphaKey = String(process.env.ALPHA_VANTAGE_API_KEY || "").trim();
+  if (alphaKey) {
+    try {
+      const url =
+        `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED` +
+        `&symbol=${encodeURIComponent(symbol)}` +
+        `&outputsize=full&apikey=${encodeURIComponent(alphaKey)}`;
+
+      const res = await fetchWithTimeout(url, timeoutMs);
+      const json = await res.json();
+
+      const series = json["Time Series (Daily)"];
+      if (series && typeof series === "object") {
+        const rows = Object.entries(series)
+          .map(([date, x]) => ({
+            date: new Date(date),
+            close: Number(x["5. adjusted close"] || x["4. close"])
+          }))
+          .filter((x) => !Number.isNaN(x.date.getTime()) && Number.isFinite(x.close))
+          .sort((a, b) => b.date - a.date);
+
+        if (rows.length) return { provider: "alphavantage", rows };
+      }
+    } catch {
+      // no more providers
+    }
+  }
+
+  return { provider: null, rows: [] };
 }
 
 // ---- tiny concurrency limiter ----
@@ -340,14 +392,33 @@ asOf = prevWeekday(asOf);
           const ticker = String(tkr || "").toUpperCase().trim();
           if (!ticker) return { ticker, ok: false, reason: "EMPTY" };
 
-          const csv = await fetchCsv(ticker, 9000);
-          if (!csv) return { ticker, ok: false, reason: "FETCH_FAILED" };
+          const fetched = await fetchPriceRows(ticker, 12000);
+const rows = fetched.rows || [];
 
-          const rows = parseStooqCsv(csv);
-          const stats = computeWindowReturn(rows, win.days, win.endISO, win.mode);
-          if (!stats) return { ticker, ok: false, reason: "COMPUTE_FAILED" };
+if (!rows.length) {
+  return {
+    ticker,
+    ok: false,
+    reason: "NO_PRICE_ROWS",
+    provider: fetched.provider || "none"
+  };
+}
 
-          return { ticker, ok: true, stats };
+const stats = computeWindowReturn(rows, win.days, win.endISO, win.mode);
+
+if (!stats) {
+  return {
+    ticker,
+    ok: false,
+    reason: "COMPUTE_FAILED",
+    rowsFound: rows.length,
+    newestDate: rows[0]?.date ? toISO(rows[0].date) : null,
+    oldestDate: rows[rows.length - 1]?.date ? toISO(rows[rows.length - 1].date) : null,
+    asOfUsed: win.endISO
+  };
+}
+
+return { ticker, ok: true, stats: { ...stats, provider: fetched.provider } };
         })
       )
     );
