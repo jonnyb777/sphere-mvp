@@ -888,6 +888,14 @@ async function warmAllMarketCache() {
                   window: <b>{r?.window?.windowKey || "—"}</b>
                 </div>
 
+                <div style={{ marginTop: 4, opacity: 0.85 }}>
+  Twelve Data key loaded:{" "}
+  <b>{r?.envDebug?.hasTwelveDataKey === true ? "true" : "false"}</b>
+  {" · "}
+  Market warm secret loaded:{" "}
+  <b>{r?.envDebug?.hasMarketWarmSecret === true ? "true" : "false"}</b>
+</div>
+
                 {failed.length ? (
                   <details style={{ marginTop: 8 }}>
                     <summary style={{ cursor: "pointer", fontWeight: 800 }}>Failed tickers</summary>
