@@ -52,7 +52,7 @@ export default function TimeframeControls({
   setMode
 }) {
   const options = useMemo(() => [30, 60, 90], []);
-  const safeMarketDate = latestSafeMarketDateISO();
+  const safeMarketDate = useMemo(() => latestSafeMarketDateISO(), []);
   const displayedAsOfDate = asOfDate || safeMarketDate;
 
   useEffect(() => {

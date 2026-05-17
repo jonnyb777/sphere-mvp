@@ -63,6 +63,14 @@ async function getAdminTokenOrThrow() {
   return token;
 }
 
+const CORE_MARKET_TICKERS = [
+  "XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLB", "XLK", "XLU", "XLRE",
+  "AAPL", "MSFT", "GOOGL", "AMZN", "TGT", "WMT", "COST", "CVS", "NFLX", "SPOT",
+  "MAR", "UBER", "MCD", "SBUX", "CMG", "KR", "ACI", "ALL", "PGR", "LMND"
+];
+
+const MARKET_WINDOWS = [30, 60, 90];
+
 const SECTORS = [
   "Consumer & Retail",
   "Restaurants",
@@ -98,6 +106,7 @@ export default function Admin() {
 
   // mappings state
   const [rules, setRules] = useState([]);
+  const [marketCacheResults, setMarketCacheResults] = useState([]);
   const [ruleQuery, setRuleQuery] = useState("");
   const [newRule, setNewRule] = useState({ merchantNorm: "", sector: "Consumer & Retail", ticker: "", sample: "" });
 
@@ -369,13 +378,67 @@ export default function Admin() {
     }
   }
 
+  async function warmMarketCache(days) {
+  setBusy(true);
+  setErr("");
+
+  try {
+    const token = await getAdminTokenOrThrow();
+
+    const qs = new URLSearchParams({
+      tickers: CORE_MARKET_TICKERS.join(","),
+      days: String(days),
+      mode: "trailing"
+    });
+
+    const res = await fetch(`/.netlify/functions/market-refresh?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const text = await res.text();
+
+    let j = null;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      // ignore
+    }
+
+    if (!res.ok) {
+      throw new Error((j && (j.error || j.message)) || `HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+
+    setMarketCacheResults((prev) => [
+      {
+        id: `${Date.now()}-${days}`,
+        days,
+        ranAt: new Date().toLocaleString(),
+        result: j
+      },
+      ...prev
+    ]);
+  } catch (e) {
+    console.error("warmMarketCache error:", e);
+    setErr(e?.message || "Could not warm market cache.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function warmAllMarketCache() {
+  for (const days of MARKET_WINDOWS) {
+    await warmMarketCache(days);
+  }
+}
+
   const header = useMemo(() => {
     const map = {
       waitlist: "Waitlist (latest 50)",
       users: "Users (latest 50)",
       pending: "Posts Pending (latest 50)",
       uploads: "Uploads (latest 50)",
-      mappings: "Mappings (Merchant Rules)"
+      mappings: "Mappings (Merchant Rules)",
+      marketCache: "Market Cache"
     };
     return map[tab];
   }, [tab]);
@@ -420,6 +483,7 @@ export default function Admin() {
         {navBtn("pending", "Posts Pending")}
         {navBtn("uploads", "Uploads")}
         {navBtn("mappings", "Mappings")}
+        {navBtn("marketCache", "Market Cache")}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
           <button
@@ -727,6 +791,122 @@ export default function Admin() {
             )}
           </div>
         )}
+
+{tab === "marketCache" && (
+  <div style={{ display: "grid", gap: 14 }}>
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid var(--s-divider, #d6dee6)",
+        background: "white"
+      }}
+    >
+      <div style={{ fontWeight: 900 }}>Warm Market Cache</div>
+
+      <div style={{ opacity: 0.85, marginTop: 6 }}>
+        Cron jobs warm this automatically each day. Use these buttons if Market Pulse says ticker data is missing.
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        {MARKET_WINDOWS.map((days) => (
+          <button
+            key={days}
+            type="button"
+            disabled={busy}
+            onClick={() => warmMarketCache(days)}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--s-divider, #d6dee6)",
+              background: "var(--s-ice, #eaf2f8)",
+              fontWeight: 900,
+              cursor: busy ? "not-allowed" : "pointer"
+            }}
+          >
+            Warm {days}d
+          </button>
+        ))}
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={warmAllMarketCache}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--s-divider, #d6dee6)",
+            background: "var(--s-accent, #5fb3d9)",
+            color: "white",
+            fontWeight: 900,
+            cursor: busy ? "not-allowed" : "pointer"
+          }}
+        >
+          Warm All
+        </button>
+      </div>
+    </div>
+
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid var(--s-divider, #d6dee6)",
+        background: "white"
+      }}
+    >
+      <div style={{ fontWeight: 900 }}>Latest Warm Results</div>
+
+      {marketCacheResults.length === 0 ? (
+        <div style={{ marginTop: 10, opacity: 0.85 }}>No manual cache warm has run yet in this session.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          {marketCacheResults.map((row) => {
+            const r = row.result || {};
+            const failed = Array.isArray(r.failedItems) ? r.failedItems : [];
+
+            return (
+              <div
+                key={row.id}
+                style={{
+                  padding: 10,
+                  borderRadius: 10,
+                  border: "1px solid var(--s-divider, #d6dee6)",
+                  background: "white"
+                }}
+              >
+                <div style={{ fontWeight: 900 }}>
+                  {row.days}d cache warm · {row.ranAt}
+                </div>
+
+                <div style={{ marginTop: 4 }}>
+                  requested: <b>{r.requested ?? "—"}</b> · cached: <b>{r.cached ?? "—"}</b> · failed:{" "}
+                  <b>{r.failed ?? "—"}</b>
+                </div>
+
+                <div style={{ marginTop: 4, opacity: 0.85 }}>
+                  window: <b>{r?.window?.windowKey || "—"}</b>
+                </div>
+
+                {failed.length ? (
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ cursor: "pointer", fontWeight: 800 }}>Failed tickers</summary>
+                    <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                      {failed
+                        .slice(0, 40)
+                        .map((x) => `${x.ticker}: ${x.reason || "failed"}${x.provider ? ` (${x.provider})` : ""}`)
+                        .join("\n")}
+                    </div>
+                  </details>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
         {tab === "mappings" && (
           <div style={{ display: "grid", gap: 14 }}>
