@@ -194,31 +194,66 @@ async function fetchWithTimeout(url, ms) {
 async function fetchPriceRows(ticker, timeoutMs = 12000) {
   const symbol = String(ticker || "").toUpperCase().trim();
 
-  const twelveKey = String(process.env.TWELVE_DATA_API_KEY || "").trim();
-  if (twelveKey) {
+const twelveKey = String(process.env.TWELVE_DATA_API_KEY || "").trim();
+
+if (twelveKey) {
+  try {
+    const url =
+      `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}` +
+      `&interval=1day&outputsize=5000&apikey=${encodeURIComponent(twelveKey)}`;
+
+    const res = await fetchWithTimeout(url, timeoutMs);
+
+    const text = await res.text();
+
+    let json = null;
+
     try {
-      const url =
-        `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}` +
-        `&interval=1day&outputsize=5000&apikey=${encodeURIComponent(twelveKey)}`;
-
-      const res = await fetchWithTimeout(url, timeoutMs);
-      const json = await res.json();
-
-      if (Array.isArray(json.values)) {
-        const rows = json.values
-          .map((x) => ({
-            date: new Date(x.datetime),
-            close: Number(x.close)
-          }))
-          .filter((x) => !Number.isNaN(x.date.getTime()) && Number.isFinite(x.close))
-          .sort((a, b) => b.date - a.date);
-
-        if (rows.length) return { provider: "twelvedata", rows };
-      }
+      json = JSON.parse(text);
     } catch {
-      // fall through to Alpha Vantage
+      return {
+        provider: "twelvedata",
+        rows: [],
+        status: res.status,
+        preview: text.slice(0, 250),
+        urlHost: "api.twelvedata.com"
+      };
     }
+
+    if (Array.isArray(json.values)) {
+      const rows = json.values
+        .map((x) => ({
+          date: new Date(x.datetime),
+          close: Number(x.close)
+        }))
+        .filter((x) => !Number.isNaN(x.date.getTime()) && Number.isFinite(x.close))
+        .sort((a, b) => b.date - a.date);
+
+      if (rows.length) {
+        return {
+          provider: "twelvedata",
+          rows
+        };
+      }
+    }
+
+    return {
+      provider: "twelvedata",
+      rows: [],
+      status: res.status,
+      preview: JSON.stringify(json).slice(0, 250),
+      urlHost: "api.twelvedata.com"
+    };
+  } catch (e) {
+    return {
+      provider: "twelvedata",
+      rows: [],
+      status: "FETCH_FAILED",
+      preview: String(e?.message || e).slice(0, 250),
+      urlHost: "api.twelvedata.com"
+    };
   }
+}
 
   const alphaKey = String(process.env.ALPHA_VANTAGE_API_KEY || "").trim();
   if (alphaKey) {
@@ -400,7 +435,10 @@ if (!rows.length) {
     ticker,
     ok: false,
     reason: "NO_PRICE_ROWS",
-    provider: fetched.provider || "none"
+    provider: fetched.provider || "none",
+    status: fetched.status || null,
+    preview: fetched.preview || null,
+    urlHost: fetched.urlHost || null
   };
 }
 
