@@ -474,19 +474,21 @@ return { ticker, ok: true, stats: { ...stats, provider: fetched.provider } };
       { merge: true }
     );
 
-    return json({
+    return json(200, {
   ok: true,
-  adminProjectId,
+
   envDebug: {
     hasTwelveDataKey: !!process.env.TWELVE_DATA_API_KEY,
     hasMarketWarmSecret: !!process.env.MARKET_WARM_SECRET
   },
+
+  adminProjectId: ADMIN_PROJECT_ID,
   window: win,
   requested: tickers.length,
-  cached: cachedTickers.length,
-  failed: failedItems.length,
-  failedItems,
-  cachedTickers
+  cached: okItems.length,
+  failed: failed.length,
+  failedItems: failed.slice(0, 25),
+  cachedTickers: okItems.map((x) => x.ticker)
 });
   } catch (e) {
     console.error("market-refresh error:", e);
