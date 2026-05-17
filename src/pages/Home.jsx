@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import TransactionUploader from "../components/TransactionUploader";
+import DashboardSnapshot from "../components/DashboardSnapshot";
 import MonthlyDrip from "../components/MonthlyDrip";
 import MarketPulse from "../components/MarketPulse";
 import MonthlyFlow from "../components/MonthlyFlow";
@@ -270,7 +271,7 @@ export default function Home({ user, firebaseUser }) {
   } catch {}
   // ===== DEBUG END =====
 
-  const [activeTab, setActiveTab] = useState("drip");
+const [activeTab, setActiveTab] = useState("dashboard");
 
   // ✅ Admin = user has a Firestore doc at admins/{uid}
   const [isAdmin, setIsAdmin] = useState(false);
@@ -413,7 +414,8 @@ export default function Home({ user, firebaseUser }) {
 
   const tabs = useMemo(() => {
     const base = [
-      { value: "drip", label: "Drip" },
+  { value: "dashboard", label: "Dashboard" },
+  { value: "drip", label: "Drip" },
       ...(hasFlowAccess || !simpleMode
         ? [{ value: "flow", label: "Flow", badge: hasFlowAccess ? "Paid" : "Preview" }]
         : []),
@@ -488,17 +490,27 @@ return (
     />
       <Tabs value={activeTab} onChange={setActiveTab} tabs={tabs} />
 
+        {/* DASHBOARD */}
+        {activeTab === "dashboard" && (
+          <>
+            <Section label="Upload Transactions" storageKey="home:dashboard:upload">
+              <TransactionUploader
+                user={firebaseUser}
+                onUpload={(rows) => {
+                  setTransactions(rows);
+                }}
+              />
+            </Section>
+
+            <Section label="Snapshot" storageKey="home:dashboard:snapshot">
+              <DashboardSnapshot transactions={transactions} />
+            </Section>
+          </>
+        )}
+
       {/* DRIP */}
       {activeTab === "drip" && (
         <>
-          <Section label="Upload Transactions" storageKey="home:upload">
-            <TransactionUploader
-              user={firebaseUser}
-              onUpload={(rows) => {
-                setTransactions(rows);
-              }}
-            />
-          </Section>
 
           <Section label="Monthly Drip" storageKey="home:drip">
             <MonthlyDrip
