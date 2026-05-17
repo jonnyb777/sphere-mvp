@@ -1,9 +1,39 @@
 // FILE: src/components/TimeframeControls.jsx
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { UI, Badge, TextLink } from "./SectionUI";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Conservative market-safe date:
+// - before 4:30 PM Pacific, use yesterday
+// - weekends roll back to Friday
+// This prevents users from selecting dates where market data may not be ready.
+function latestSafeMarketDateISO() {
+  const dt = new Date();
+
+  const pacificParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(dt);
+
+  const hour = Number(pacificParts.find((p) => p.type === "hour")?.value || 0);
+  const minute = Number(pacificParts.find((p) => p.type === "minute")?.value || 0);
+
+  const beforeCutoff = hour < 16 || (hour === 16 && minute < 30);
+
+  if (beforeCutoff) {
+    dt.setDate(dt.getDate() - 1);
+  }
+
+  while (dt.getDay() === 0 || dt.getDay() === 6) {
+    dt.setDate(dt.getDate() - 1);
+  }
+
+  return dt.toISOString().slice(0, 10);
 }
 
 function monthEndISO(dateISO) {
@@ -22,11 +52,16 @@ export default function TimeframeControls({
   setMode
 }) {
   const options = useMemo(() => [30, 60, 90], []);
+  const safeMarketDate = latestSafeMarketDateISO();
+  const displayedAsOfDate = asOfDate || safeMarketDate;
 
-  // ✅ Keep overall row at your standard body size
+  useEffect(() => {
+  if (!asOfDate || asOfDate > safeMarketDate) {
+    setAsOfDate(safeMarketDate);
+  }
+}, [asOfDate, safeMarketDate, setAsOfDate]);
+
   const rowStyle = { fontSize: UI.FONT_BODY, lineHeight: 1.45 };
-
-  // ✅ Make the pill buttons + input slightly smaller (so 30/60/90 doesn’t feel huge)
   const controlText = { fontSize: UI.FONT_MUTED, fontFamily: "inherit", lineHeight: 1.2 };
 
   const pillButton = (active) => ({
@@ -38,6 +73,13 @@ export default function TimeframeControls({
     cursor: "pointer",
     fontWeight: active ? 900 : 700
   });
+
+  function applyAsOf(next) {
+    if (!next) return;
+
+    const clamped = next > safeMarketDate ? safeMarketDate : next;
+    setAsOfDate(mode === "monthEnd" ? monthEndISO(clamped) : clamped);
+  }
 
   return (
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", ...rowStyle }}>
@@ -52,14 +94,12 @@ export default function TimeframeControls({
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <b>As of:</b>
+        <b>Market as of:</b>
         <input
           type="date"
-          value={asOfDate || todayISO()}
-          onChange={(e) => {
-            const next = e.target.value;
-            setAsOfDate(mode === "monthEnd" ? monthEndISO(next) : next);
-          }}
+          value={displayedAsOfDate}
+          max={safeMarketDate}
+          onChange={(e) => applyAsOf(e.target.value)}
           style={{
             ...controlText,
             padding: "5px 9px",
@@ -67,8 +107,8 @@ export default function TimeframeControls({
             border: `1px solid ${UI.BAND_BORDER}`
           }}
         />
-        <TextLink title="Reset as-of date" onClick={() => setAsOfDate(todayISO())}>
-          Today
+        <TextLink title="Reset to latest available market date" onClick={() => setAsOfDate(safeMarketDate)}>
+          Latest available
         </TextLink>
       </div>
 
@@ -80,9 +120,9 @@ export default function TimeframeControls({
         <button
           type="button"
           onClick={() => {
-            const base = asOfDate || todayISO();
+            const base = displayedAsOfDate || safeMarketDate;
             setMode("monthEnd");
-            setAsOfDate(monthEndISO(base));
+            setAsOfDate(monthEndISO(base > safeMarketDate ? safeMarketDate : base));
           }}
           style={pillButton(mode === "monthEnd")}
         >

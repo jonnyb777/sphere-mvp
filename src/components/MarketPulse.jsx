@@ -23,10 +23,20 @@ function maxDate(dates) {
   return parsed[0].toISOString().slice(0, 10);
 }
 
-function windowLabel({ timeframeDays, asOfDate, timeMode }) {
+function windowLabel({
+  timeframeDays,
+  asOfDate,
+  timeMode,
+  marketMetaAsOf
+}) {
   const mode = timeMode === "monthEnd" ? "Month-end" : "Trailing";
-  const asOf = asOfDate || "latest available";
-  return `${timeframeDays}d · ${mode} · as-of ${asOf}`;
+
+  const marketAsOf =
+    marketMetaAsOf ||
+    asOfDate ||
+    "latest available";
+
+  return `${timeframeDays}d · ${mode} · Market data as of ${marketAsOf}`;
 }
 
 function formatSpendSectorsWithRollup(rawSectors = []) {
@@ -144,7 +154,8 @@ function buildPulseNarrative({
     return `Upload transactions to generate your top spend categories. Once we have them, we’ll compute Market Pulse for ${windowLabel({
       timeframeDays,
       asOfDate,
-      timeMode
+      timeMode,
+      marketMetaAsOf: asOfDate
     })}.`;
   }
 
@@ -161,7 +172,8 @@ function buildPulseNarrative({
   return `Market Pulse for ${windowLabel({
     timeframeDays,
     asOfDate,
-    timeMode
+    timeMode,
+    marketMetaAsOf: asOfDate
   })}. Your activity drives the runner list: we start from your top spend categories (${rawLine}), roll them up into market buckets (${rolledLine}), then select up to 10 runners by performance from tickers mapped to those buckets (diversified across your buckets when possible). Market “Sector Leaders” above are ETF proxies for context and may differ from your spend. ${
     coveredLeaders.length ? `Market sector leaders include: ${coveredLeaders.join(", ")}.` : ""
   } ${
@@ -470,7 +482,7 @@ export default function MarketPulse({
         }
 
         setDataSourceNote(
-          "Market data is computed from daily close data and served from cache. Informational only; not a recommendation."
+          "Sphere uses the latest market prices we can confirm. These numbers are for context only, not investment advice."
         );
       } catch (e) {
         console.error("MarketPulse error:", e);
@@ -665,7 +677,21 @@ export default function MarketPulse({
         }}
       >
         <b>Confidence note:</b>
-        <div style={{ fontSize: UI.FONT_BODY, marginTop: "0.25rem" }}>{dataSourceNote}</div>
+
+        <div style={{ fontSize: UI.FONT_BODY, marginTop: "0.25rem" }}>
+          {dataSourceNote}
+        </div>
+
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: UI.FONT_MUTED,
+            opacity: 0.85,
+            lineHeight: 1.45
+          }}
+        >
+          Your spending upload and the market may not end on the same day. Sphere compares your latest spending pattern with the latest market window available.
+        </div>
       </div>
     </div>
   );
