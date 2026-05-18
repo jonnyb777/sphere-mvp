@@ -157,13 +157,14 @@ function scoreTone(score) {
   return { tone: "neutral", label: "Low match" };
 }
 
-function windowLabel({ timeframeDays, asOfDate, timeMode }) {
+function windowLabel({ timeframeDays, asOfDate, timeMode, marketMetaAsOf }) {
   const mode = timeMode === "monthEnd" ? "Month-end" : "Trailing";
-  const asOf = asOfDate || "latest available";
-  return `${timeframeDays}d · ${mode} · as-of ${asOf}`;
+  const marketAsOf = marketMetaAsOf || asOfDate || "latest available";
+
+  return `${timeframeDays}d · ${mode} · Market data as of ${marketAsOf}`;
 }
 
-function buildFlowPulseNarrative({ communityTopSectors, timeframeDays, asOfDate, timeMode }) {
+function buildFlowPulseNarrative({ communityTopSectors, timeframeDays, asOfDate, timeMode, marketMetaAsOf }) {
   const sectors = (communityTopSectors || []).filter(Boolean).slice(0, 5);
   if (!sectors.length) {
     return `Load the admin community feed to generate Flow’s pulse. Once we have it, we’ll show leaders + runners for ${windowLabel({
@@ -174,10 +175,11 @@ function buildFlowPulseNarrative({ communityTopSectors, timeframeDays, asOfDate,
   }
 
   return `Flow Pulse for ${windowLabel({
-    timeframeDays,
-    asOfDate,
-    timeMode
-  })}. We start from the community’s top spend buckets (${sectors.join(
+  timeframeDays,
+  asOfDate,
+  timeMode,
+  marketMetaAsOf
+})}. We start from the community’s top spend buckets (${sectors.join(
     ", "
   )}), show the strongest ETF sector proxies, and list the most active community runners within those buckets (aggregate-only).`;
 }
@@ -548,14 +550,15 @@ async function saveConsent(nextValue) {
   const showPulseControls =
     typeof setTimeframeDays === "function" && typeof setAsOfDate === "function" && typeof setTimeMode === "function";
 
-  const pulseNarrative = useMemo(() => {
-    return buildFlowPulseNarrative({
-      communityTopSectors,
-      timeframeDays,
-      asOfDate: asOfDate || asOf || "",
-      timeMode
-    });
-  }, [communityTopSectors, timeframeDays, asOfDate, asOf, timeMode]);
+  const flowPulseNarrative = useMemo(() => {
+  return buildFlowPulseNarrative({
+    communityTopSectors,
+    timeframeDays,
+    asOfDate: asOfDate || asOf || "",
+    timeMode,
+    marketMetaAsOf: asOfDate || asOf || ""
+  });
+}, [communityTopSectors, timeframeDays, asOfDate, asOf, timeMode]);
 
   return (
     <div style={{ lineHeight: 1.45 }}>
@@ -764,7 +767,7 @@ async function saveConsent(nextValue) {
                   }}
                 >
                   <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Flow Pulse Narrative</div>
-                  <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{pulseNarrative}</div>
+                  <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{flowPulseNarrative}</div>
                 </div>
               </div>
 

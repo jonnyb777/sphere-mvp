@@ -11,29 +11,42 @@ function todayISO() {
 // - weekends roll back to Friday
 // This prevents users from selecting dates where market data may not be ready.
 function latestSafeMarketDateISO() {
-  const dt = new Date();
-
-  const pacificParts = new Intl.DateTimeFormat("en-US", {
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false
-  }).formatToParts(dt);
+  }).formatToParts(new Date());
 
-  const hour = Number(pacificParts.find((p) => p.type === "hour")?.value || 0);
-  const minute = Number(pacificParts.find((p) => p.type === "minute")?.value || 0);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
 
-  const beforeCutoff = hour < 16 || (hour === 16 && minute < 30);
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
 
-  if (beforeCutoff) {
+  // Build a plain local date from the Pacific calendar date.
+  const dt = new Date(year, month - 1, day);
+
+  // Before 4:30 PM Pacific, use the prior calendar day.
+  if (hour < 16 || (hour === 16 && minute < 30)) {
     dt.setDate(dt.getDate() - 1);
   }
 
+  // Never allow Saturday/Sunday as a market date.
   while (dt.getDay() === 0 || dt.getDay() === 6) {
     dt.setDate(dt.getDate() - 1);
   }
 
-  return dt.toISOString().slice(0, 10);
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function monthEndISO(dateISO) {
@@ -53,10 +66,13 @@ export default function TimeframeControls({
 }) {
   const options = useMemo(() => [30, 60, 90], []);
   const safeMarketDate = useMemo(() => latestSafeMarketDateISO(), []);
-  const displayedAsOfDate = asOfDate || safeMarketDate;
+const displayedAsOfDate = asOfDate || safeMarketDate;
 
-  useEffect(() => {
-  if (!asOfDate || asOfDate > safeMarketDate) {
+useEffect(() => {
+  const selected = asOfDate ? new Date(`${asOfDate}T12:00:00`) : null;
+  const isWeekend = selected && (selected.getDay() === 0 || selected.getDay() === 6);
+
+  if (!asOfDate || asOfDate > safeMarketDate || isWeekend) {
     setAsOfDate(safeMarketDate);
   }
 }, [asOfDate, safeMarketDate, setAsOfDate]);
