@@ -768,6 +768,21 @@ async function saveConsent(nextValue) {
                 >
                   <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Flow Pulse Narrative</div>
                   <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{flowPulseNarrative}</div>
+                  <div
+                    style={{
+                      marginTop: "0.5rem",
+                      padding: "0.65rem",
+                      borderRadius: 10,
+                      background: "var(--s-ice, #eaf2f8)",
+                      border: "1px solid var(--s-divider, #d6dee6)",
+                      fontSize: UI.FONT_BODY,
+                      lineHeight: 1.45
+                    }}
+                  >
+                    <b>Timing note:</b> Flow uses community activity for the selected window and compares it with market data through{" "}
+                    <b>{asOfDate || asOf || "the latest available market date"}</b>. If community data ends earlier, Sphere compares the
+                    latest available community pattern with the selected market window.
+                  </div>
                 </div>
               </div>
 

@@ -543,6 +543,9 @@ return (
               transactions={transactions}
               sectorLeaders={sectorLeaders}
               personalRunners={personalRunners}
+              timeframeDays={timeframeDays}
+              asOfDate={asOfDate}
+              timeMode={timeMode}
             />
 
             {!hasFlowAccess && simpleMode && (

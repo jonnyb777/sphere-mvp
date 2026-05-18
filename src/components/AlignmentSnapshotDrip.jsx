@@ -6,7 +6,77 @@ import { rollUpSector, toEtfSectorName } from "../utils/sectorRollup";
 function money(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
-  return `$${v.toFixed(2)}`;
+  return `$${Math.abs(v).toFixed(2)}`;
+}
+
+function parseDateAny(tx) {
+  const raw =
+    tx.date ??
+    tx.Date ??
+    tx.posted_at ??
+    tx.PostedAt ??
+    tx.timestamp ??
+    tx.Timestamp ??
+    tx.transactionDate ??
+    tx.TransactionDate ??
+    tx["Posting Date"] ??
+    tx.PostingDate ??
+    null;
+
+  if (!raw) return null;
+
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0, 0);
+  }
+
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    let [, m, d, y] = slash;
+    if (y.length === 2) y = `20${y}`;
+    return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0, 0);
+  }
+
+  const dt = new Date(s);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function toISODate(dt) {
+  if (!dt || Number.isNaN(dt.getTime())) return "";
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const d = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function withinWindow(dt, timeframeDays, asOfDate, timeMode) {
+  if (!dt) return false;
+
+  const iso = asOfDate || new Date().toISOString().slice(0, 10);
+  const parts = String(iso).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+
+  let end;
+
+  if (parts) {
+    const [, y, m, d] = parts;
+    end =
+      timeMode === "monthEnd"
+        ? new Date(Number(y), Number(m), 0, 23, 59, 59, 999)
+        : new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999);
+  } else {
+    end = new Date();
+    end.setHours(23, 59, 59, 999);
+  }
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - Number(timeframeDays || 30));
+  start.setHours(0, 0, 0, 0);
+
+  return dt >= start && dt <= end;
 }
 
 /**
@@ -19,40 +89,76 @@ function money(n) {
  * - Tier 2: Runner ticker only
  * - Tier 3: Sector leader only
  */
-export default function AlignmentSnapshotDrip({ transactions, sectorLeaders, personalRunners }) {
+export default function AlignmentSnapshotDrip({
+  transactions,
+  sectorLeaders,
+  personalRunners,
+  timeframeDays = 30,
+  asOfDate = "",
+  timeMode = "trailing"
+}) {
   const [showTierRules, setShowTierRules] = useState(false);
+  
+// Use the same selected window for Alignment that Drip/Flow controls use.
+const alignedTransactions = useMemo(() => {
+  const arr = Array.isArray(transactions) ? transactions : [];
 
-  // Build Top 10 tickers from transactions (by spend)
-  // Also keep one example merchant string for display.
-  const topTickers = useMemo(() => {
-    const arr = Array.isArray(transactions) ? transactions : [];
-    const map = new Map(); // ticker -> { amount, exampleMerchant, sectorBucket }
+  const dated = arr
+    .map((tx) => ({ tx, date: parseDateAny(tx) }))
+    .filter((x) => x.date);
 
-    for (const tx of arr) {
-      const merchant = (tx.merchant || tx.Merchant || tx.name || tx.Name || tx.Description || "").toString().trim();
-      const amount = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
-      if (!merchant || !Number.isFinite(amount)) continue;
+  if (!dated.length) return arr;
 
-      const classified = classifyMerchant(merchant);
-      const tkr = classified?.ticker ? String(classified.ticker).toUpperCase().trim() : "";
-      if (!tkr) continue; // if no ticker mapping, it can't aggregate by ticker
+  return dated
+    .filter((x) => withinWindow(x.date, timeframeDays, asOfDate, timeMode))
+    .map((x) => x.tx);
+}, [transactions, timeframeDays, asOfDate, timeMode]);
 
-      const sectorBucket = classified?.sector || "Other / Unmapped";
+const uploadThrough = useMemo(() => {
+  const dates = alignedTransactions
+    .map(parseDateAny)
+    .filter(Boolean)
+    .sort((a, b) => b - a);
 
-      const prev = map.get(tkr);
-      if (!prev) {
-        map.set(tkr, { ticker: tkr, amount, exampleMerchant: merchant, sectorBucket });
-      } else {
-        prev.amount += amount;
-        // keep the first example merchant we saw (stable display)
-        map.set(tkr, prev);
-      }
+  return dates.length ? toISODate(dates[0]) : "";
+}, [alignedTransactions]);
+
+const timingText = uploadThrough
+  ? `Your alignment uses uploaded spending through ${uploadThrough} and compares it with the selected ${timeframeDays}d market window as of ${
+      asOfDate || "the latest available market date"
+    }.`
+  : `Your alignment uses the latest uploaded spending available and compares it with the selected ${timeframeDays}d market window.`;
+
+// Build Top 10 tickers from transactions (by spend)
+// Also keep one example merchant string for display.
+const topTickers = useMemo(() => {
+  const arr = Array.isArray(alignedTransactions) ? alignedTransactions : [];
+  const map = new Map(); // ticker -> { amount, exampleMerchant, sectorBucket }
+
+  for (const tx of arr) {
+    const merchant = (tx.merchant || tx.Merchant || tx.name || tx.Name || tx.Description || "").toString().trim();
+    const amount = Number(tx.amount ?? tx.Amount ?? tx.value ?? tx.Value ?? 0);
+    if (!merchant || !Number.isFinite(amount)) continue;
+
+    const classified = classifyMerchant(merchant);
+    const tkr = classified?.ticker ? String(classified.ticker).toUpperCase().trim() : "";
+    if (!tkr) continue;
+
+    const sectorBucket = classified?.sector || "Other / Unmapped";
+
+    const prev = map.get(tkr);
+    if (!prev) {
+      map.set(tkr, { ticker: tkr, amount, exampleMerchant: merchant, sectorBucket });
+    } else {
+      prev.amount += amount;
+      map.set(tkr, prev);
     }
+  }
 
-    return Array.from(map.values())
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 10);
-  }, [transactions]);
+  return Array.from(map.values())
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 10);
+}, [alignedTransactions]);
 
   const sectorLeaderNames = useMemo(() => {
     const arr = Array.isArray(sectorLeaders) ? sectorLeaders : [];
@@ -114,10 +220,24 @@ export default function AlignmentSnapshotDrip({ transactions, sectorLeaders, per
   }
 
   return (
-    <div>
-      <p style={{ marginTop: 0 }}>
-        Alignment shows how your spending overlaps with market sector leadership and your runner list.
-      </p>
+  <div>
+    <p style={{ marginTop: 0 }}>
+      Alignment shows how your spending overlaps with market sector leadership and your runner list.
+    </p>
+
+    <div
+      style={{
+        marginTop: "0.5rem",
+        padding: "0.65rem",
+        borderRadius: 10,
+        background: "var(--s-ice, #eaf2f8)",
+        border: "1px solid var(--s-divider, #d6dee6)",
+        fontSize: "0.92rem",
+        lineHeight: 1.45
+      }}
+    >
+      <b>Timing note:</b> {timingText}
+    </div>
 
       <div style={{ marginTop: "0.5rem", overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.92rem" }}>
