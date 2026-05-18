@@ -64,9 +64,17 @@ async function getAdminTokenOrThrow() {
 }
 
 const CORE_MARKET_TICKERS = [
-  "XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLB", "XLK", "XLU", "XLRE",
-  "AAPL", "MSFT", "GOOGL", "AMZN", "TGT", "WMT", "COST", "CVS", "NFLX", "SPOT",
-  "MAR", "UBER", "MCD", "SBUX", "CMG", "KR", "ACI", "ALL", "PGR", "LMND"
+  "XLC",
+  "XLY",
+  "XLP",
+  "XLE",
+  "XLF",
+  "XLV",
+  "XLI",
+  "XLB",
+  "XLK",
+  "XLU",
+  "XLRE"
 ];
 
 const MARKET_WINDOWS = [30, 60, 90];
