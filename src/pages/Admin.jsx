@@ -897,16 +897,31 @@ async function warmAllMarketCache() {
 </div>
 
                 {failed.length ? (
-                  <details style={{ marginTop: 8 }}>
-                    <summary style={{ cursor: "pointer", fontWeight: 800 }}>Failed tickers</summary>
-                    <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
-                      {failed
-                        .slice(0, 40)
-                        .map((x) => `${x.ticker}: ${x.reason || "failed"}${x.provider ? ` (${x.provider})` : ""}`)
-                        .join("\n")}
-                    </div>
-                  </details>
-                ) : null}
+  <details style={{ marginTop: 8 }}>
+    <summary style={{ cursor: "pointer", fontWeight: 800 }}>Failed tickers</summary>
+
+    <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12 }}>
+      {failed.slice(0, 40).map((x) => (
+        <div key={x.ticker} style={{ marginBottom: 8, whiteSpace: "normal" }}>
+          <div>
+            {x.ticker}: {x.reason || "failed"}
+            {x.provider ? ` (${x.provider})` : ""}
+          </div>
+
+          {x.status ? (
+            <div style={{ opacity: 0.8 }}>status: {String(x.status)}</div>
+          ) : null}
+
+          {x.preview ? (
+            <div style={{ opacity: 0.8, wordBreak: "break-word" }}>
+              preview: {String(x.preview).slice(0, 180)}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  </details>
+) : null}
               </div>
             );
           })}
