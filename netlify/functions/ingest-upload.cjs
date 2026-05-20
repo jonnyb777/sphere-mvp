@@ -656,20 +656,43 @@ if (!batchId) {
   activated = true;
   decision = "accepted";
 
-  // If we're replacing, mark the previous active batch as deleted/superseded
-  if (shouldReplace && activeBatchId && activeBatchId !== batchId) {
-    const prevBatchRef = db.collection("uploads").doc(uid).collection("batches").doc(activeBatchId);
+  // If uploads materially overlap, mark the older batch as superseded.
+// Otherwise keep both uploads active so older date ranges can still
+// contribute to trailing windows like 60d/90d.
+
+if (shouldReplace && activeBatchId && activeBatchId !== batchId) {
+  const prevBatchRef = db.collection("uploads").doc(uid).collection("batches").doc(activeBatchId);
+
+  const prevSnap = await prevBatchRef.get();
+  const prev = prevSnap.exists ? (prevSnap.data() || {}) : {};
+
+  const prevStart = String(prev?.stats?.minDate || "");
+  const prevEnd = String(prev?.stats?.maxDate || "");
+
+  const nextStart = String(stats?.minDate || "");
+  const nextEnd = String(stats?.maxDate || "");
+
+  // overlap exists if date windows intersect
+  const overlaps =
+    prevStart &&
+    prevEnd &&
+    nextStart &&
+    nextEnd &&
+    !(nextEnd < prevStart || nextStart > prevEnd);
+
+  // only supersede if uploads materially overlap
+  if (overlaps) {
     await prevBatchRef.set(
       {
-        adminStatus: "deleted",
-        deletedReason: "superseded_by_new_active_batch",
-        deletedAt: nowTS(),
+        adminStatus: "superseded",
         supersededBy: batchId,
+        supersededAt: nowTS(),
         updatedAt: nowTS()
       },
       { merge: true }
     );
   }
+}
 
   await windowRef.set(
     {
@@ -712,7 +735,7 @@ if (!batchId) {
 
         // IMPORTANT:
         // downstream reads (Flow rebuild, Drip loaders) should treat adminStatus:"deleted" as excluded.
-        adminStatus: "active",
+        adminStatus: activated ? "active" : "pending",
 
         window: {
           ...windowMeta,

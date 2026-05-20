@@ -181,14 +181,33 @@ async function loadTxDocsForWindow({ startISO, endISO }) {
   return rows;
 }
 
-// Batch-status cache: uid__batchId -> "active" | "deleted" | null
-async function fetchBatchStatus(uid, batchId) {
+// Batch eligibility cache: uid__batchId -> full batch metadata
+function isFlowEligibleBatch(batch) {
+  if (!batch) return false;
+
+  if (batch.adminStatus === "deleted") return false;
+  if (batch.excludeFromFlow === true) return false;
+  if (batch.isTest === true) return false;
+  if (batch?.quality?.flagged === true) return false;
+  if (batch?.activation?.activated !== true) return false;
+
+  return true;
+}
+
+async function fetchBatchMeta(uid, batchId) {
   if (!uid || !batchId) return null;
-  const ref = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+
+  const ref = db
+    .collection("uploads")
+    .doc(uid)
+    .collection("batches")
+    .doc(batchId);
+
   const snap = await ref.get();
+
   if (!snap.exists) return null;
-  const data = snap.data() || {};
-  return data.adminStatus || "active";
+
+  return snap.data() || null;
 }
 
 // Aggregate spend by sector, excluding deleted batches, and counting only spend (amount < 0)
@@ -216,8 +235,8 @@ async function aggregateSectorsGlobal(rows) {
   // Fetch batch statuses with concurrency + caching
   const statusByKey = new Map();
   await mapLimit(batchKeys, LIMITS.BATCH_STATUS_CONCURRENCY, async (b) => {
-    const s = await fetchBatchStatus(b.uid, b.batchId);
-    statusByKey.set(b.k, s);
+    const meta = await fetchBatchMeta(b.uid, b.batchId);
+statusByKey.set(b.k, meta);
     return null;
   });
 
@@ -231,8 +250,8 @@ async function aggregateSectorsGlobal(rows) {
 
     // Respect deletions
     if (k) {
-      const st = statusByKey.get(k);
-      if (st === "deleted") continue;
+      const meta = statusByKey.get(k);
+if (!isFlowEligibleBatch(meta)) continue;
     }
 
     // Only include spend (amount < 0)

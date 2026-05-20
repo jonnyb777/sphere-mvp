@@ -310,6 +310,36 @@ export default function Admin() {
     }
   }
 
+  async function updateUploadStatus({ uid, batchId, action }) {
+  const note = prompt("Optional note for this action:") || "";
+
+  setBusy(true);
+  setErr("");
+
+  try {
+    const token = await getAdminTokenOrThrow();
+
+    const res = await fetch("/.netlify/functions/admin-update-upload-status", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ uid, batchId, action, note })
+    });
+
+    const j = await res.json();
+    if (!res.ok) throw new Error(j?.error || "Could not update upload.");
+
+    await loadUploads();
+  } catch (e) {
+    console.error("updateUploadStatus error:", e);
+    setErr(e?.message || "Could not update upload.");
+  } finally {
+    setBusy(false);
+  }
+}
+
   // Soft-delete upload batch (adminStatus = deleted)
   async function removeUpload({ uid, batchId }) {
     const reason = prompt("Why remove this upload? (optional)") || "Admin removed";
@@ -761,6 +791,72 @@ async function warmAllMarketCache() {
                         </div>
                       </div>
 
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => updateUploadStatus({ uid: u.uid, batchId: u.batchId, action: "activate" })}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--s-divider, #d6dee6)",
+                          background: "var(--s-ice, #eaf2f8)",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        Activate
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => updateUploadStatus({ uid: u.uid, batchId: u.batchId, action: "deactivate" })}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--s-divider, #d6dee6)",
+                          background: "white",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        Deactivate
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => updateUploadStatus({ uid: u.uid, batchId: u.batchId, action: "mark_test" })}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid #f59e0b",
+                          background: "#fef3c7",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        Mark Test
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => updateUploadStatus({ uid: u.uid, batchId: u.batchId, action: "exclude_flow" })}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: "1px solid var(--s-divider, #d6dee6)",
+                          background: "white",
+                          fontWeight: 900,
+                          cursor: busy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        Exclude Flow
+                      </button>
+
                       <button
                         type="button"
                         disabled={busy}
@@ -775,11 +871,12 @@ async function warmAllMarketCache() {
                           cursor: busy ? "not-allowed" : "pointer"
                         }}
                       >
-                        Remove upload
-                      </button>
-                    </div>
+                        Remove
+                        </button>
+                      </div>
+                      </div>
 
-                    {unmappedCount ? (
+                      {unmappedCount ? (
                       <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "var(--s-ice, #eaf2f8)" }}>
                         <div style={{ fontWeight: 900 }}>Unmapped merchants (top)</div>
                         <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>

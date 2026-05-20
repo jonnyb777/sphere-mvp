@@ -159,6 +159,17 @@ async function getActiveBatchForWindow(uid, windowKey) {
   return { batchId: String(w.activeBatchId), window: w };
 }
 
+function isFlowEligibleBatch(batch) {
+  if (!batch) return false;
+
+  if (batch.adminStatus === "deleted") return false;
+  if (batch.excludeFromFlow === true) return false;
+  if (batch.isTest === true) return false;
+  if (batch?.quality?.flagged === true) return false;
+  if (batch?.activation?.activated !== true) return false;
+
+  return true;
+}
 async function getBatchMeta(uid, batchId) {
   const bref = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
   const bsnap = await bref.get();
@@ -185,6 +196,18 @@ async function getTxDocs(uid, txIds) {
     }
   }
   return out;
+}
+
+async function loadTxDocsForWindow({ startISO, endISO }) {
+  const snap = await db
+    .collectionGroup("tx")
+    .where("postedDate", ">=", startISO)
+    .where("postedDate", "<=", endISO)
+    .get();
+
+  const rows = [];
+  snap.forEach((d) => rows.push({ id: d.id, ...(d.data() || {}) }));
+  return rows;
 }
 
 function pickKeyForTickerRow(tx) {
@@ -215,105 +238,79 @@ exports.handler = async (event) => {
     const win = computeWindow({ days, asOfISO: asOf, mode });
 
     const users = await getFlowEligibleUsers();
+const eligibleUidSet = new Set(users.map((u) => String(u.uid || u.id || "").trim()).filter(Boolean));
 
-    const byKey = new Map();
-    const bySector = new Map();
+const byKey = new Map();
+const bySector = new Map();
 
-    const perUser = await mapLimit(users, 8, async (u) => {
-  const uid = u.uid || u.id;
-  if (!uid) return null;
-
-  const active = await getActiveBatchForWindow(uid, win.windowKey);
-  if (!active?.batchId) return null;
-
-  const b = await getBatchMeta(uid, active.batchId);
-  if (!b) return null;
-
-  // Respect admin deletions
-  if (b.adminStatus === "deleted") return null;
-
-  const txIds = await getTxIdsForBatch(uid, active.batchId, 5000);
-  if (!txIds.length) return null;
-
-  const txDocs = await getTxDocs(uid, txIds);
-
-  // Return local aggregates (no shared mutation here)
-  const localByKey = new Map();    // key -> { spend, events, usersSet, userSpend }
-  const localBySector = new Map(); // sector -> spend
-
-  for (const tx of txDocs) {
-    const d = String(tx.postedDate || "");
-    if (!d || d < win.startISO || d > win.endISO) continue;
-
-    const amt = Number(tx.amount ?? 0);
-    if (!Number.isFinite(amt)) continue;
-
-    // ✅ IMPORTANT: Only spending (negative). Don’t count income/refunds.
-    if (amt >= 0) continue;
-
-    const spend = Math.abs(amt);
-    if (!spend) continue;
-
-    const spendSector = String(tx.sector || "Other / Unmapped");
-    const sector = rollupSector(spendSector);
-
-    const pk = pickKeyForTickerRow(tx);
-    if (!pk.key) continue;
-
-    localBySector.set(sector, (localBySector.get(sector) || 0) + spend);
-
-    if (!localByKey.has(pk.key)) {
-      localByKey.set(pk.key, {
-        key: pk.key,
-        ticker: pk.ticker,
-        sector,
-        spend: 0,
-        events: 0,
-        usersSet: new Set(),
-        userSpend: new Map()
-      });
-    }
-
-    const row = localByKey.get(pk.key);
-    row.spend += spend;
-    row.events += 1;
-    row.usersSet.add(uid);
-    row.userSpend.set(uid, (row.userSpend.get(uid) || 0) + spend);
-  }
-
-  return { localByKey, localBySector };
+const txDocs = await loadTxDocsForWindow({
+  startISO: win.startISO,
+  endISO: win.endISO
 });
 
-// Merge results
-for (const r of perUser) {
-  if (!r) continue;
+const batchMetaCache = new Map(); // uid__batchId -> batch meta
+const seenTx = new Set(); // uid__txId
 
-  for (const [sector, spend] of r.localBySector.entries()) {
-    bySector.set(sector, (bySector.get(sector) || 0) + spend);
+for (const tx of txDocs) {
+  const uid = String(tx.uid || "").trim();
+  const batchId = String(tx.batchId || "").trim();
+
+  if (!uid || !batchId) continue;
+
+  // Keep current consent/access contributor rule.
+  if (!eligibleUidSet.has(uid)) continue;
+
+  const txKey = `${uid}__${tx.id || tx.txId || `${tx.postedDate}|${tx.merchantNorm}|${tx.amountCents}`}`;
+  if (seenTx.has(txKey)) continue;
+  seenTx.add(txKey);
+
+  const batchKey = `${uid}__${batchId}`;
+
+  let batchMeta = batchMetaCache.get(batchKey);
+  if (batchMeta === undefined) {
+    batchMeta = await getBatchMeta(uid, batchId);
+    batchMetaCache.set(batchKey, batchMeta || null);
   }
 
-  for (const [key, row] of r.localByKey.entries()) {
-    if (!byKey.has(key)) {
-      byKey.set(key, {
-        key: row.key,
-        ticker: row.ticker,
-        sector: row.sector,
-        spend: 0,
-        usersSet: new Set(),
-        events: 0,
-        userSpend: new Map()
-      });
-    }
+  if (!isFlowEligibleBatch(batchMeta)) continue;
 
-    const agg = byKey.get(key);
-    agg.spend += row.spend;
-    agg.events += row.events;
+  const d = String(tx.postedDate || "");
+  if (!d || d < win.startISO || d > win.endISO) continue;
 
-    for (const uid of row.usersSet) agg.usersSet.add(uid);
-    for (const [uid, s] of row.userSpend.entries()) {
-      agg.userSpend.set(uid, (agg.userSpend.get(uid) || 0) + s);
-    }
+  const amt = Number(tx.amount ?? 0);
+  if (!Number.isFinite(amt)) continue;
+
+  // Only spending counts. Refunds/income/positive rows do not count.
+  if (amt >= 0) continue;
+
+  const spend = Math.abs(amt);
+  if (!spend) continue;
+
+  const spendSector = String(tx.sector || "Other / Unmapped");
+  const sector = rollupSector(spendSector);
+
+  const pk = pickKeyForTickerRow(tx);
+  if (!pk.key) continue;
+
+  bySector.set(sector, (bySector.get(sector) || 0) + spend);
+
+  if (!byKey.has(pk.key)) {
+    byKey.set(pk.key, {
+      key: pk.key,
+      ticker: pk.ticker,
+      sector,
+      spend: 0,
+      usersSet: new Set(),
+      events: 0,
+      userSpend: new Map()
+    });
   }
+
+  const row = byKey.get(pk.key);
+  row.spend += spend;
+  row.events += 1;
+  row.usersSet.add(uid);
+  row.userSpend.set(uid, (row.userSpend.get(uid) || 0) + spend);
 }
 
     const rows = [];
