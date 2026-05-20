@@ -416,7 +416,49 @@ export default function Admin() {
     }
   }
 
-  async function warmMarketCache(days) {
+  async function rebuildFlowWindow(days) {
+  setBusy(true);
+  setErr("");
+
+  try {
+    const token = await getAdminTokenOrThrow();
+
+    const res = await fetch("/.netlify/functions/rebuild-flow-window", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        days,
+        mode: "trailing",
+        asOf: new Date().toISOString().slice(0, 10)
+      })
+    });
+
+    const text = await res.text();
+
+    let j = null;
+    try {
+      j = JSON.parse(text);
+    } catch {
+      // ignore
+    }
+
+    if (!res.ok) {
+      throw new Error((j && (j.error || j.message)) || `HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+
+    alert(`Flow ${days}d rebuilt successfully.\n\nWindow: ${j.windowId || "—"}\nCohort users: ${j.cohortUsers ?? "—"}\nWrote: ${j.wrote ?? "—"}`);
+  } catch (e) {
+    console.error("rebuildFlowWindow error:", e);
+    setErr(e?.message || "Could not rebuild Flow.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function warmMarketCache(days) {
   setBusy(true);
   setErr("");
 
@@ -476,7 +518,8 @@ async function warmAllMarketCache() {
       pending: "Posts Pending (latest 50)",
       uploads: "Uploads (latest 50)",
       mappings: "Mappings (Merchant Rules)",
-      marketCache: "Market Cache"
+      marketCache: "Market Cache",
+      flowMaintenance: "Flow Maintenance"
     };
     return map[tab];
   }, [tab]);
@@ -522,6 +565,7 @@ async function warmAllMarketCache() {
         {navBtn("uploads", "Uploads")}
         {navBtn("mappings", "Mappings")}
         {navBtn("marketCache", "Market Cache")}
+        {navBtn("flowMaintenance", "Flow Maintenance")}
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
           <button
@@ -896,6 +940,51 @@ async function warmAllMarketCache() {
             )}
           </div>
         )}
+
+{tab === "flowMaintenance" && (
+  <div style={{ display: "grid", gap: 14 }}>
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid var(--s-divider, #d6dee6)",
+        background: "white"
+      }}
+    >
+      <div style={{ fontWeight: 900 }}>Rebuild Flow Windows</div>
+
+      <div style={{ opacity: 0.85, marginTop: 6 }}>
+        Use this after changing upload statuses, marking tests, excluding uploads, fixing mappings, or cleaning duplicates.
+        Rebuild recalculates Flow from eligible uploads only.
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        {[30, 60, 90].map((days) => (
+          <button
+            key={days}
+            type="button"
+            disabled={busy}
+            onClick={() => rebuildFlowWindow(days)}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid var(--s-divider, #d6dee6)",
+              background: "var(--s-ice, #eaf2f8)",
+              fontWeight: 900,
+              cursor: busy ? "not-allowed" : "pointer"
+            }}
+          >
+            Rebuild {days}d
+          </button>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, fontSize: 12, opacity: 0.8, lineHeight: 1.45 }}>
+        Flow rebuild includes only batches that are activated, not deleted, not test, not excluded from Flow, and not flagged.
+      </div>
+    </div>
+  </div>
+)}
 
 {tab === "marketCache" && (
   <div style={{ display: "grid", gap: 14 }}>
