@@ -8,6 +8,15 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { markFirstFlowView } from "../utils/userStats";
 
+function money(n) {
+  const v = Number(n || 0);
+  return v.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2
+  });
+}
+
 function pct(n) {
   if (n === null || n === undefined) return "—";
   return `${(n * 100).toFixed(2)}%`;
@@ -205,6 +214,10 @@ export default function MonthlyFlow({
   const embedded = section !== "all";
 
   const [communityItems, setCommunityItems] = useState([]);
+  const [communityMonthly, setCommunityMonthly] = useState({
+  topMerchants: [],
+  topSectors: []
+});
   const [loading, setLoading] = useState(false);
   const [flowError, setFlowError] = useState("");
 
@@ -274,7 +287,14 @@ async function saveConsent(nextValue) {
           json = JSON.parse(text);
         }
 
-        const arr = normalizeCommunityPayload(json);
+        const monthly = json && !Array.isArray(json) ? json.monthly || json : null;
+        setCommunityMonthly({
+          topMerchants: Array.isArray(monthly?.topMerchants) ? monthly.topMerchants : [],
+          topSectors: Array.isArray(monthly?.topSectors) ? monthly.topSectors : []
+        });
+
+        const runnerPayload = Array.isArray(json) ? json : json?.runners || json?.signals || [];
+        const arr = normalizeCommunityPayload(runnerPayload);
         setCommunityItems(arr);
       } catch (e) {
         console.error("MonthlyFlow load error:", e);
@@ -327,38 +347,51 @@ async function saveConsent(nextValue) {
   }, [normalizedCommunity]);
 
   const communityTopSectors = useMemo(() => {
-    const map = new Map();
-    for (const x of normalizedCommunity) {
-      const s = String(x.sector || "Other / Unmapped");
-      const c = Number(x.count ?? 0);
-      map.set(s, (map.get(s) || 0) + (Number.isFinite(c) ? c : 0));
-    }
-    return Array.from(map.entries())
-      .map(([sector, score]) => ({ sector, score }))
-      .sort((a, b) => b.score - a.score)
+  const direct = Array.isArray(communityMonthly.topSectors) ? communityMonthly.topSectors : [];
+
+  if (direct.length) {
+    return direct
+      .map((x) => ({
+        sector: rollUpSector(x.sector || x.name || "Other / Unmapped"),
+        spend: Number(x.spend ?? x.amount ?? x.total ?? 0)
+      }))
       .filter((x) => x.sector && x.sector !== "Other / Unmapped")
+      .sort((a, b) => b.spend - a.spend)
       .slice(0, 5)
       .map((x) => x.sector);
-  }, [normalizedCommunity]);
+  }
+
+  const map = new Map();
+  for (const x of normalizedCommunity) {
+    const s = String(x.sector || "Other / Unmapped");
+    const c = Number(x.count ?? 0);
+    map.set(s, (map.get(s) || 0) + (Number.isFinite(c) ? c : 0));
+  }
+
+  return Array.from(map.entries())
+    .map(([sector, score]) => ({ sector, score }))
+    .sort((a, b) => b.score - a.score)
+    .filter((x) => x.sector && x.sector !== "Other / Unmapped")
+    .slice(0, 5)
+    .map((x) => x.sector);
+}, [communityMonthly.topSectors, normalizedCommunity]);
 
   const narrativeHighestSector = useMemo(() => communityTopSectors[0] || "—", [communityTopSectors]);
 
   const top10CommunityMerchants = useMemo(() => {
-    const sorted = [...normalizedCommunity].sort((a, b) => b.count - a.count);
-    const chosen = [];
-    const seen = new Set();
-    for (const x of sorted) {
-      if (chosen.length >= 10) break;
-      if (!x.ticker || seen.has(x.ticker)) continue;
-      chosen.push(x);
-      seen.add(x.ticker);
-    }
-    return chosen.sort((a, b) => {
-      const s = String(a.sector || "").localeCompare(String(b.sector || ""), undefined, { sensitivity: "base" });
-      if (s !== 0) return s;
-      return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
-    });
-  }, [normalizedCommunity]);
+  const direct = Array.isArray(communityMonthly.topMerchants) ? communityMonthly.topMerchants : [];
+
+  return direct
+    .map((x) => ({
+      merchant: String(x.merchant || x.merchantNorm || x.name || "Unknown merchant"),
+      sector: rollUpSector(x.sector || "Other / Unmapped"),
+      spend: Number(x.spend ?? x.amount ?? x.total ?? 0),
+      count: Number(x.count ?? x.events ?? 0)
+    }))
+    .filter((x) => x.merchant && Number.isFinite(x.spend))
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 10);
+}, [communityMonthly.topMerchants]);
 
   const top10CommunityRunners = useMemo(() => {
     const topSet = new Set(communityTopSectors);
@@ -692,10 +725,11 @@ async function saveConsent(nextValue) {
               ) : openMonthlyMerchants ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
                   {top10CommunityMerchants.map((x) => (
-                    <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
+                    <li key={`${x.merchant}-${x.sector}`} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                        <b>{x.sector}</b> — <b>{x.ticker}</b> <VerifiedBadge item={x} />
-                        <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                        <b>{x.merchant}</b>
+                        <span>— {money(x.spend)}</span>
+                        <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.sector})</span>
                       </div>
                     </li>
                   ))}
@@ -709,23 +743,55 @@ async function saveConsent(nextValue) {
               />
 
               {loading ? (
-                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading community feed…</p>
+                <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
+                  Loading community feed…
+                </p>
               ) : !communityTopSectors.length ? (
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>
                   No community sectors shown yet (feed not populated).
                 </p>
               ) : openMonthlySectors ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
-                  {[...communityTopSectors]
-                    .slice()
-                    .sort((a, b) => String(a).localeCompare(String(b), undefined, { sensitivity: "base" }))
-                    .map((s) => (
-                      <li key={s} style={{ marginBottom: "0.35rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                          <b>{s}</b>
-                        </div>
-                      </li>
-                    ))}
+                  {(Array.isArray(communityMonthly.topSectors) &&
+                  communityMonthly.topSectors.length
+                    ? communityMonthly.topSectors
+                        .map((x) => ({
+                          sector: rollUpSector(
+                            x.sector || x.name || "Other / Unmapped"
+                          ),
+                          spend: Number(
+                            x.spend ?? x.amount ?? x.total ?? 0
+                          )
+                        }))
+                        .filter(
+                          (x) =>
+                            x.sector &&
+                            x.sector !== "Other / Unmapped"
+                        )
+                        .sort((a, b) => b.spend - a.spend)
+                        .slice(0, 5)
+                    : communityTopSectors.map((s) => ({
+                        sector: s,
+                        spend: null
+                      }))
+                  ).map((x) => (
+                    <li key={x.sector} style={{ marginBottom: "0.35rem" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          flexWrap: "wrap"
+                        }}
+                      >
+                        <b>{x.sector}</b>
+
+                        {x.spend !== null ? (
+                          <span>{money(x.spend)}</span>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
                 </ol>
               ) : null}
             </div>
@@ -795,12 +861,7 @@ async function saveConsent(nextValue) {
                 <p style={{ fontSize: UI.FONT_BODY, marginTop: "0.5rem" }}>Loading sector leaders…</p>
               ) : sectorLeaders.length ? (
                 <ol style={{ marginTop: "0.5rem", fontSize: UI.FONT_BODY }}>
-                  {sectorLeaders
-                    .slice()
-                    .sort((a, b) =>
-                      String(a.sectorName || "").localeCompare(String(b.sectorName || ""), undefined, { sensitivity: "base" })
-                    )
-                    .map((x) => (
+                  {sectorLeaders.map((x) => (
                       <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <b>{x.sectorName}</b> <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.ticker})</span>

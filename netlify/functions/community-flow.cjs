@@ -210,6 +210,41 @@ async function loadTxDocsForWindow({ startISO, endISO }) {
   return rows;
 }
 
+function getBatchIdsFromTx(tx) {
+  const ids = [];
+
+  if (Array.isArray(tx?.batchIds)) {
+    for (const id of tx.batchIds) {
+      const s = String(id || "").trim();
+      if (s) ids.push(s);
+    }
+  }
+
+  const fallback = String(tx?.batchId || "").trim();
+  if (fallback) ids.push(fallback);
+
+  return Array.from(new Set(ids));
+}
+
+async function txHasEligibleBatch(uid, tx, batchMetaCache) {
+  const batchIds = getBatchIdsFromTx(tx);
+  if (!uid || !batchIds.length) return false;
+
+  for (const batchId of batchIds) {
+    const batchKey = `${uid}__${batchId}`;
+
+    let batchMeta = batchMetaCache.get(batchKey);
+    if (batchMeta === undefined) {
+      batchMeta = await getBatchMeta(uid, batchId);
+      batchMetaCache.set(batchKey, batchMeta || null);
+    }
+
+    if (isFlowEligibleBatch(batchMeta)) return true;
+  }
+
+  return false;
+}
+
 function pickKeyForTickerRow(tx) {
   const t = tx?.ticker ? String(tx.ticker).toUpperCase().trim() : "";
   if (t) return { key: `T:${t}`, ticker: t };
@@ -242,6 +277,7 @@ const eligibleUidSet = new Set(users.map((u) => String(u.uid || u.id || "").trim
 
 const byKey = new Map();
 const bySector = new Map();
+const byMerchant = new Map();
 
 const txDocs = await loadTxDocsForWindow({
   startISO: win.startISO,
@@ -264,15 +300,7 @@ for (const tx of txDocs) {
   if (seenTx.has(txKey)) continue;
   seenTx.add(txKey);
 
-  const batchKey = `${uid}__${batchId}`;
-
-  let batchMeta = batchMetaCache.get(batchKey);
-  if (batchMeta === undefined) {
-    batchMeta = await getBatchMeta(uid, batchId);
-    batchMetaCache.set(batchKey, batchMeta || null);
-  }
-
-  if (!isFlowEligibleBatch(batchMeta)) continue;
+  if (!(await txHasEligibleBatch(uid, tx, batchMetaCache))) continue;
 
   const d = String(tx.postedDate || "");
   if (!d || d < win.startISO || d > win.endISO) continue;
@@ -286,13 +314,30 @@ for (const tx of txDocs) {
   const spend = Math.abs(amt);
   if (!spend) continue;
 
+  const merchant = String(tx.merchant || tx.merchantNorm || "Unknown merchant").trim();
   const spendSector = String(tx.sector || "Other / Unmapped");
   const sector = rollupSector(spendSector);
 
+  bySector.set(sector, (bySector.get(sector) || 0) + spend);
+
+  const merchantKey = `${merchant.toUpperCase()}__${sector}`;
+  if (!byMerchant.has(merchantKey)) {
+    byMerchant.set(merchantKey, {
+      merchant,
+      sector,
+      spend: 0,
+      count: 0,
+      usersSet: new Set()
+    });
+  }
+
+  const merchantRow = byMerchant.get(merchantKey);
+  merchantRow.spend += spend;
+  merchantRow.count += 1;
+  merchantRow.usersSet.add(uid);
+
   const pk = pickKeyForTickerRow(tx);
   if (!pk.key) continue;
-
-  bySector.set(sector, (bySector.get(sector) || 0) + spend);
 
   if (!byKey.has(pk.key)) {
     byKey.set(pk.key, {
@@ -412,19 +457,46 @@ for (const tx of txDocs) {
       );
 
     for (const r of remaining) {
-      if (topRunners.length >= 10) break;
-      if (seenTickers.has(r.ticker)) continue;
-      topRunners.push(r);
-      seenTickers.add(r.ticker);
-    }
+  if (topRunners.length >= 10) break;
+  if (seenTickers.has(r.ticker)) continue;
+  topRunners.push(r);
+  seenTickers.add(r.ticker);
+}
 
-    return {
+const topMerchants = Array.from(byMerchant.values())
+  .map((x) => ({
+    merchant: x.merchant,
+    sector: x.sector,
+    spend: x.spend,
+    count: x.count,
+    users: x.usersSet.size
+  }))
+  .sort((a, b) => b.spend - a.spend)
+  .slice(0, 10);
+
+const monthly = {
+  topMerchants,
+  topSectors
+};
+
+return {
       statusCode: 200,
       headers: {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store"
       },
-      body: JSON.stringify(topRunners)
+      body: JSON.stringify({
+  monthly,
+  runners: topRunners,
+  asOf: win.endISO,
+  window: win,
+  meta: {
+    eligibleUsers: eligibleUidSet.size,
+    txCount: seenTx.size,
+    merchantCount: byMerchant.size,
+    sectorCount: bySector.size
+  }
+})
     };
   } catch (e) {
     console.error("community-flow error:", e);
