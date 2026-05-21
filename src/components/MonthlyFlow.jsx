@@ -281,10 +281,18 @@ async function saveConsent(nextValue) {
   { requireAuth: true }
 );
         } catch (e) {
-          console.warn("MonthlyFlow: community-flow function failed; falling back to static file", e);
-          const res = await fetch("/community-flow.json", { cache: "no-store" });
-          const text = await res.text();
-          json = JSON.parse(text);
+          console.warn("MonthlyFlow: community-flow function failed", e);
+
+          json = {
+            monthly: {
+              topMerchants: [],
+              topSectors: []
+            },
+            runners: [],
+            signals: []
+          };
+
+          setFlowError(String(e?.message || "Flow feed error"));
         }
 
         const monthly = json && !Array.isArray(json) ? json.monthly || json : null;
