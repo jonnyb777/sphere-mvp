@@ -8,6 +8,51 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { markFirstFlowView } from "../utils/userStats";
 
+function cleanMerchantLabel(name = "") {
+  const s = String(name || "").toUpperCase();
+
+  const rules = [
+    ["STARBUCKS", "Starbucks"],
+    ["BOWLERO", "Bowlero"],
+    ["CHICK-FIL-A", "Chick-fil-A"],
+    ["CHICK FIL A", "Chick-fil-A"],
+    ["STONE OVEN", "Stone Oven"],
+    ["AUNTIE ANNE", "Auntie Anne’s"],
+    ["UBER", "Uber"],
+    ["CVS", "CVS Pharmacy"],
+    ["TARGET", "Target"],
+    ["AMAZON", "Amazon"],
+    ["NETFLIX", "Netflix"],
+    ["APPLE", "Apple"],
+    ["DELL", "Dell"],
+    ["RALPHS", "Ralphs"],
+    ["MACY", "Macy’s"],
+    ["MARRIOTT", "Marriott"],
+    ["COSTCO", "Costco"],
+    ["UNITED FIN", "United Financial Casualty Insurance"]
+  ];
+
+  for (const [needle, label] of rules) {
+    if (s.includes(needle)) return label;
+  }
+
+  return String(name || "")
+    .replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, "")
+    .replace(/\b\d{10}\b/g, "")
+    .replace(/\b\d{2}\/\d{2}\b/g, "")
+    .replace(/\bLOS ANGELES\b/gi, "")
+    .replace(/\bCULVER CITY\b/gi, "")
+    .replace(/\bWESTCHESTER\b/gi, "")
+    .replace(/\bWILMINGTON\b/gi, "")
+    .replace(/\bDE\b/gi, "")
+    .replace(/\bCA\d+\b/gi, "")
+    .replace(/\bCA\b/gi, "")
+    .replace(/^SQ\s*\*/i, "")
+    .replace(/#\d+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function money(n) {
   const v = Number(n || 0);
   return v.toLocaleString(undefined, {
@@ -218,6 +263,10 @@ export default function MonthlyFlow({
   topMerchants: [],
   topSectors: []
 });
+  const [communityMomentum, setCommunityMomentum] = useState({
+    topMerchants: [],
+    topSectors: []
+  });
   const [loading, setLoading] = useState(false);
   const [flowError, setFlowError] = useState("");
 
@@ -276,15 +325,23 @@ async function saveConsent(nextValue) {
             mode: timeMode || "trailing"
           });
 
-          json = await fetchJsonNetlifyFunction(
+          const token = await auth.currentUser?.getIdToken?.();
+
+json = await fetchJsonNetlifyFunction(
   `/.netlify/functions/community-flow?${qs.toString()}`,
-  { requireAuth: true }
+  {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  }
 );
         } catch (e) {
           console.warn("MonthlyFlow: community-flow function failed", e);
 
           json = {
             monthly: {
+              topMerchants: [],
+              topSectors: []
+            },
+            momentum: {
               topMerchants: [],
               topSectors: []
             },
@@ -300,6 +357,15 @@ async function saveConsent(nextValue) {
           topMerchants: Array.isArray(monthly?.topMerchants) ? monthly.topMerchants : [],
           topSectors: Array.isArray(monthly?.topSectors) ? monthly.topSectors : []
         });
+
+        setCommunityMomentum({
+  topMerchants: Array.isArray(json?.momentum?.topMerchants)
+    ? json.momentum.topMerchants
+    : [],
+  topSectors: Array.isArray(json?.momentum?.topSectors)
+    ? json.momentum.topSectors
+    : []
+});
 
         const runnerPayload = Array.isArray(json) ? json : json?.runners || json?.signals || [];
         const arr = normalizeCommunityPayload(runnerPayload);
@@ -426,16 +492,25 @@ async function saveConsent(nextValue) {
   }, [normalizedCommunity, communityTopSectors]);
 
   useEffect(() => {
-    if (typeof onCommunityTopSectorsChange === "function") onCommunityTopSectorsChange(communityTopSectors);
-  }, [communityTopSectors, onCommunityTopSectorsChange]);
+  if (typeof onCommunityTopSectorsChange === "function") {
+    onCommunityTopSectorsChange(communityTopSectors);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [communityTopSectors]);
 
-  useEffect(() => {
-    if (typeof onCommunityRunnersChange === "function") onCommunityRunnersChange(top10CommunityRunners);
-  }, [top10CommunityRunners, onCommunityRunnersChange]);
+useEffect(() => {
+  if (typeof onCommunityRunnersChange === "function") {
+    onCommunityRunnersChange(top10CommunityRunners);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [top10CommunityRunners]);
 
-  useEffect(() => {
-  if (typeof onCommunityMerchantsChange === "function") onCommunityMerchantsChange(top10CommunityMerchants);
-}, [top10CommunityMerchants, onCommunityMerchantsChange]);
+useEffect(() => {
+  if (typeof onCommunityMerchantsChange === "function") {
+    onCommunityMerchantsChange(top10CommunityMerchants);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [top10CommunityMerchants]);
 
   useEffect(() => {
     const run = async () => {
@@ -735,7 +810,7 @@ async function saveConsent(nextValue) {
                   {top10CommunityMerchants.map((x) => (
                     <li key={`${x.merchant}-${x.sector}`} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                        <b>{x.merchant}</b>
+                        <b>{cleanMerchantLabel(x.merchant)}</b>
                         <span>— {money(x.spend)}</span>
                         <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>({x.sector})</span>
                       </div>
@@ -806,6 +881,51 @@ async function saveConsent(nextValue) {
           ) : null}
         </div>
       ) : null}
+
+{showMonthly && allowMonthlyBody ? (
+  <div style={{ marginTop: "1rem" }}>
+    <div
+      style={{
+        fontSize: UI.FONT_HEADER,
+        fontWeight: 900,
+        color: UI.PRIMARY
+      }}
+    >
+      Community Momentum
+    </div>
+
+    <div
+      style={{
+        marginTop: "0.5rem",
+        fontSize: UI.FONT_BODY,
+        opacity: 0.9
+      }}
+    >
+      Momentum tracks participation, activity frequency, and breadth — not dollar spend.
+    </div>
+
+    {Array.isArray(communityMomentum.topMerchants) &&
+    communityMomentum.topMerchants.length ? (
+      <ol style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
+        {communityMomentum.topMerchants.map((x) => (
+          <li key={`${x.merchant}-${x.sector}`}>
+            <b>{cleanMerchantLabel(x.merchant)}</b>
+            {" — "}
+            {x.count} events
+            {" · "}
+            {x.users} users
+            {" · "}
+            {x.sector}
+          </li>
+        ))}
+      </ol>
+    ) : (
+      <p style={{ marginTop: "0.5rem" }}>
+        No community momentum data yet.
+      </p>
+    )}
+  </div>
+) : null}
 
       {/* PULSE */}
       {showPulse ? (

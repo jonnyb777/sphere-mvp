@@ -140,14 +140,22 @@ async function mapLimit(items, limitN, worker) {
 }
 
 async function getFlowEligibleUsers() {
-  const snap = await db
-    .collection("users")
-    .where("flowAccess", "==", true)
-    .where("flowConsent", "==", true)
-    .limit(300)
-    .get();
+  const snap = await db.collection("users").limit(500).get();
 
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() || {}) }))
+    .filter((u) => {
+      const hasAccess =
+        u.flowAccess === true ||
+        u?.entitlements?.flow?.active === true ||
+        u?.entitlements?.flow?.grace === true ||
+        u.plan === "flow" ||
+        u.plan === "admin";
+
+      const consent = u.flowConsent !== false;
+
+      return hasAccess && consent;
+    });
 }
 
 async function getActiveBatchForWindow(uid, windowKey) {
@@ -206,8 +214,21 @@ async function loadTxDocsForWindow({ startISO, endISO }) {
     .get();
 
   const rows = [];
-  snap.forEach((d) => rows.push({ id: d.id, ...(d.data() || {}) }));
-  return rows;
+
+snap.forEach((d) => {
+  const data = d.data() || {};
+  const parts = d.ref.path.split("/");
+  // Expected path: uploads/{uid}/tx/{txId}
+  const uidFromPath = parts[0] === "uploads" ? parts[1] : "";
+
+  rows.push({
+  id: d.id,
+  ...data,
+  uid: data.uid || uidFromPath
+});
+});
+
+return rows;
 }
 
 function getBatchIdsFromTx(tx) {
@@ -245,6 +266,74 @@ async function txHasEligibleBatch(uid, tx, batchMetaCache) {
   return false;
 }
 
+function cleanMerchantDisplayName(name = "") {
+  let s = String(name || "").toUpperCase().trim();
+
+  // Known brand rules FIRST
+  const rules = [
+    ["STARBUCKS", "Starbucks"],
+    ["BOWLERO", "Bowlero"],
+    ["CHICK-FIL-A", "Chick-fil-A"],
+    ["CHICK FIL A", "Chick-fil-A"],
+    ["STONE OVEN", "Stone Oven"],
+    ["AUNTIE ANNE", "Auntie Anne’s"],
+    ["UNITED FIN CAS INS", "United Financial Casualty Insurance"],
+    ["UBER", "Uber"],
+    ["CVS", "CVS Pharmacy"],
+    ["WALGREENS", "Walgreens"],
+    ["TARGET", "Target"],
+    ["AMAZON", "Amazon"],
+    ["APPLE", "Apple"],
+    ["DELL", "Dell"],
+    ["RALPHS", "Ralphs"],
+    ["MACY", "Macy’s"],
+    ["MARRIOTT", "Marriott"],
+    ["COSTCO", "Costco"],
+    ["NETFLIX", "Netflix"]
+  ];
+
+  for (const [needle, label] of rules) {
+    if (s.includes(needle)) return label;
+  }
+
+  // Generic cleanup fallback
+  s = s
+    .replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, "")
+    .replace(/\b\d{10}\b/g, "")
+    .replace(/\b\d{2}\/\d{2}\b/g, "")
+    .replace(/#\d+/g, "")
+    .replace(/\bCA\d+\b/g, "")
+    .replace(/\bLOS ANGELES\b/g, "")
+    .replace(/\bCULVER CITY\b/g, "")
+    .replace(/\bWESTCHESTER\b/g, "")
+    .replace(/\bWILMINGTON\b/g, "")
+    .replace(/\bDE\b/g, "")
+    .replace(/\bCA\b/g, "")
+    .replace(/\bSQ \*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return s
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function cleanSectorFallback(merchant, currentSector) {
+  const m = String(merchant || "").toUpperCase();
+  const s = String(currentSector || "Other / Unmapped");
+
+  if (s && s !== "Other" && s !== "Other / Unmapped") return s;
+
+  if (["APPLE", "DELL", "NETFLIX"].some((x) => m.includes(x))) return "Technology";
+  if (["MACY", "MARRIOTT", "AMAZON", "BOWLERO", "CHICK-FIL-A", "STONE OVEN", "AUNTIE ANNE", "UBER"].some((x) => m.includes(x))) {
+    return "Consumer Discretionary";
+  }
+  if (["TARGET", "CVS", "RALPHS", "COSTCO", "WALGREENS"].some((x) => m.includes(x))) return "Consumer Staples";
+  if (["INSURANCE", "UNITED FIN"].some((x) => m.includes(x))) return "Financials";
+
+  return s;
+}
+
 function pickKeyForTickerRow(tx) {
   const t = tx?.ticker ? String(tx.ticker).toUpperCase().trim() : "";
   if (t) return { key: `T:${t}`, ticker: t };
@@ -253,6 +342,44 @@ function pickKeyForTickerRow(tx) {
   if (m) return { key: `M:${m}`, ticker: null };
 
   return { key: null, ticker: null };
+}
+
+function cleanMerchantDisplayName(name = "") {
+  let s = String(name || "").toUpperCase().trim();
+
+  s = s
+    .replace(/\bPOS DEBIT\b/g, "")
+    .replace(/\bWEB ID:\s*\d+/g, "")
+    .replace(/\b\d{2}\/\d{2}\b/g, "")
+    .replace(/\b\d{1,2}\s\d{1,2}\b/g, "")
+    .replace(/\bCA\b|\bNY\b|\bTX\b|\bFL\b|\bWA\b/g, "")
+    .replace(/#\d+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const rules = [
+    ["CVS", "CVS Pharmacy"],
+    ["WALGREENS", "Walgreens"],
+    ["TARGET", "Target"],
+    ["AMAZON", "Amazon"],
+    ["APPLE", "Apple"],
+    ["RALPHS", "Ralphs"],
+    ["COSTCO", "Costco"],
+    ["MARRIOTT", "Marriott"],
+    ["MACY", "Macy's"],
+    ["CHICK FIL A", "Chick-fil-A"],
+    ["NETFLIX", "Netflix"],
+    ["DELL", "Dell"],
+    ["CANVA", "Canva"]
+  ];
+
+  for (const [needle, label] of rules) {
+    if (s.includes(needle)) return label;
+  }
+
+  return s
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 exports.handler = async (event) => {
@@ -273,7 +400,16 @@ exports.handler = async (event) => {
     const win = computeWindow({ days, asOfISO: asOf, mode });
 
     const users = await getFlowEligibleUsers();
-const eligibleUidSet = new Set(users.map((u) => String(u.uid || u.id || "").trim()).filter(Boolean));
+const eligibleUidSet = new Set(
+  users.map((u) => String(u.uid || u.id || "").trim()).filter(Boolean)
+);
+
+// MVP/dev safety fallback:
+// If the signed-in caller has Flow access, allow their own eligible uploads to contribute.
+// This prevents Flow from going blank when users/{uid} is missing newer entitlement fields.
+if (flowAccess && callerUid) {
+  eligibleUidSet.add(String(callerUid).trim());
+}
 
 const byKey = new Map();
 const bySector = new Map();
@@ -287,35 +423,78 @@ const txDocs = await loadTxDocsForWindow({
 const batchMetaCache = new Map(); // uid__batchId -> batch meta
 const seenTx = new Set(); // uid__txId
 
+const debug = {
+  txDocs: txDocs.length,
+  missingUid: 0,
+  missingBatchIds: 0,
+  userNotEligible: 0,
+  duplicateTx: 0,
+  noEligibleBatch: 0,
+  outsideWindow: 0,
+  invalidAmount: 0,
+  nonSpend: 0,
+  counted: 0
+};
+
 for (const tx of txDocs) {
   const uid = String(tx.uid || "").trim();
-  const batchId = String(tx.batchId || "").trim();
+  const batchIds = getBatchIdsFromTx(tx);
 
-  if (!uid || !batchId) continue;
+  if (!uid) {
+  debug.missingUid += 1;
+  continue;
+}
+
+if (!batchIds.length) {
+  debug.missingBatchIds += 1;
+  continue;
+}
 
   // Keep current consent/access contributor rule.
-  if (!eligibleUidSet.has(uid)) continue;
+  if (!eligibleUidSet.has(uid)) {
+  debug.userNotEligible += 1;
+  continue;
+}
 
   const txKey = `${uid}__${tx.id || tx.txId || `${tx.postedDate}|${tx.merchantNorm}|${tx.amountCents}`}`;
-  if (seenTx.has(txKey)) continue;
-  seenTx.add(txKey);
+  if (seenTx.has(txKey)) {
+  debug.duplicateTx += 1;
+  continue;
+}
+seenTx.add(txKey);
 
-  if (!(await txHasEligibleBatch(uid, tx, batchMetaCache))) continue;
-
+  if (!(await txHasEligibleBatch(uid, tx, batchMetaCache))) {
+  debug.noEligibleBatch += 1;
+  continue;
+}
+  
   const d = String(tx.postedDate || "");
-  if (!d || d < win.startISO || d > win.endISO) continue;
+  if (!d || d < win.startISO || d > win.endISO) {
+  debug.outsideWindow += 1;
+  continue;
+}
 
-  const amt = Number(tx.amount ?? 0);
-  if (!Number.isFinite(amt)) continue;
+  const amt = Number(tx.amount ?? tx.Amount ?? 0);
+if (!Number.isFinite(amt)) {
+  debug.invalidAmount += 1;
+  continue;
+}
 
   // Only spending counts. Refunds/income/positive rows do not count.
-  if (amt >= 0) continue;
+  if (amt >= 0) {
+  debug.nonSpend += 1;
+  continue;
+}
 
   const spend = Math.abs(amt);
   if (!spend) continue;
+  debug.counted += 1;
 
-  const merchant = String(tx.merchant || tx.merchantNorm || "Unknown merchant").trim();
-  const spendSector = String(tx.sector || "Other / Unmapped");
+  const merchantRaw = String(tx.merchant || tx.merchantNorm || "Unknown merchant").trim();
+  const merchant = cleanMerchantDisplayName(merchantRaw);
+
+  const spendSectorRaw = String(tx.sector || "Other / Unmapped");
+  const spendSector = cleanSectorFallback(merchant, spendSectorRaw);
   const sector = rollupSector(spendSector);
 
   bySector.set(sector, (bySector.get(sector) || 0) + spend);
@@ -463,6 +642,45 @@ for (const tx of txDocs) {
   seenTickers.add(r.ticker);
 }
 
+const momentumMerchants = Array.from(byMerchant.values())
+  .map((x) => ({
+    merchant: x.merchant,
+    sector: x.sector,
+    count: x.count,
+    users: x.usersSet.size
+  }))
+  .sort((a, b) => b.count - a.count || b.users - a.users)
+  .slice(0, 10);
+
+const momentumSectors = Array.from(byMerchant.values()).reduce((acc, x) => {
+  const s = x.sector || "Other";
+
+  if (!acc[s]) {
+    acc[s] = {
+      sector: s,
+      count: 0,
+      usersSet: new Set()
+    };
+  }
+
+  acc[s].count += Number(x.count || 0);
+
+  for (const uid of x.usersSet || []) {
+    acc[s].usersSet.add(uid);
+  }
+
+  return acc;
+}, {});
+
+const momentumTopSectors = Object.values(momentumSectors)
+  .map((x) => ({
+    sector: x.sector,
+    count: x.count,
+    users: x.usersSet.size
+  }))
+  .sort((a, b) => b.count - a.count || b.users - a.users)
+  .slice(0, 5);
+
 const topMerchants = Array.from(byMerchant.values())
   .map((x) => ({
     merchant: x.merchant,
@@ -479,6 +697,11 @@ const monthly = {
   topSectors
 };
 
+const momentum = {
+  topMerchants: momentumMerchants,
+  topSectors: momentumTopSectors
+};
+
 return {
       statusCode: 200,
       headers: {
@@ -487,15 +710,17 @@ return {
       },
       body: JSON.stringify({
   monthly,
+  momentum,
   runners: topRunners,
   asOf: win.endISO,
   window: win,
   meta: {
-    eligibleUsers: eligibleUidSet.size,
-    txCount: seenTx.size,
-    merchantCount: byMerchant.size,
-    sectorCount: bySector.size
-  }
+  eligibleUsers: eligibleUidSet.size,
+  txCount: seenTx.size,
+  merchantCount: byMerchant.size,
+  sectorCount: bySector.size,
+  debug
+}
 })
     };
   } catch (e) {
