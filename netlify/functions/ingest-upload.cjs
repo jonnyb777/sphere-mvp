@@ -24,6 +24,7 @@ initAdmin();
 const db = admin.firestore();
 const nowTS = () => admin.firestore.FieldValue.serverTimestamp();
 const inc = (n) => admin.firestore.FieldValue.increment(n);
+const arrayUnion = (...items) => admin.firestore.FieldValue.arrayUnion(...items);
 
 // -------------------------
 // Defensible thresholds
@@ -348,6 +349,7 @@ if (!batchId) {
     // Unmapped tracking
     const unmappedCounts = new Map(); // merchantNorm -> count
     const unmappedSamples = new Map(); // merchantNorm -> sample raw (best effort)
+    const inferredTickers = new Set();
 
     function extractFields(r) {
       const merchantRaw =
@@ -403,6 +405,9 @@ if (!batchId) {
       }
       if (x.merchantNorm) merchantOk += 1;
       if (Number.isFinite(x.amt)) amountOk += 1;
+      if (x.ticker) {
+  inferredTickers.add(String(x.ticker).toUpperCase().trim());
+}
 
       if (!x.dateISO || !x.merchantNorm || !Number.isFinite(x.amt) || x.amountCents === null) continue;
 
@@ -489,9 +494,10 @@ if (!batchId) {
         data: {
           uid,
 
-          // IMPORTANT for Flow rebuild filtering:
-          // tie each tx back to the upload batch so deleted batches can be excluded.
+          // Keep latest batchId for backward compatibility,
+          // but also remember every batch this transaction appeared in.
           batchId,
+          batchIds: arrayUnion(batchId),
 
           postedDate: x.dateISO,
           amount: x.amt,
@@ -519,6 +525,44 @@ if (!batchId) {
       for (const op of chunk) batch.set(op.ref, op.data, { merge: true });
       await batch.commit();
     }
+
+    const uploadTickers = Array.from(
+  new Set(
+    parsed
+      .map((x) => String(x.ticker || "").toUpperCase().trim())
+      .filter(Boolean)
+  )
+);
+
+if (uploadTickers.length) {
+  let tickerBatch = db.batch();
+  let tickerOps = 0;
+
+  for (const ticker of uploadTickers) {
+    const ref = db.collection("market_ticker_queue").doc(ticker);
+
+    tickerBatch.set(
+      ref,
+      {
+        ticker,
+        sources: admin.firestore.FieldValue.arrayUnion("upload"),
+        lastSeenInUploadAt: nowTS(),
+        updatedAt: nowTS()
+      },
+      { merge: true }
+    );
+
+    tickerOps += 1;
+
+    if (tickerOps >= 450) {
+      await tickerBatch.commit();
+      tickerBatch = db.batch();
+      tickerOps = 0;
+    }
+  }
+
+  if (tickerOps > 0) await tickerBatch.commit();
+}
 
     // Write per-merchant unmapped docs (REAL counts)
     if (unmappedCounts.size) {
