@@ -1,0 +1,6 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions."scheduled-market-and-flow-refresh"]
+schedule = "0 11 * * *"
