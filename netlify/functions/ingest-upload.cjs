@@ -767,6 +767,8 @@ if (shouldReplace && activeBatchId && activeBatchId !== batchId) {
 
     // Persist batch doc
     const batchRef = db.collection("uploads").doc(uid).collection("batches").doc(batchId);
+    const existingBatchSnap = await batchRef.get();
+    const isRepeatUpload = existingBatchSnap.exists;
 
     await batchRef.set(
       {
@@ -809,16 +811,116 @@ if (shouldReplace && activeBatchId && activeBatchId !== batchId) {
       { merge: true }
     );
 
-    return jsonResponse(200, {
-      ok: true,
-      uid,
-      batchId,
-      windowKey: windowMeta.windowKey,
-      decision,
-      activated,
-      reasons,
-      stats: batchStats
-    });
+    // Persist lightweight insight snapshot for future insight-card engine.
+// Stores derived summaries only, not raw transactions.
+const insightSnapshotRef = db
+  .collection("users")
+  .doc(uid)
+  .collection("insight_snapshots")
+  .doc(batchId);
+
+const topMerchantsSnapshot = Array.from(
+  parsed.reduce((map, x) => {
+    const merchant = x.merchantRaw || x.merchantNorm || "Unknown";
+    const spend = x.amt < 0 ? Math.abs(x.amt) : 0;
+    if (!spend) return map;
+
+    map.set(merchant, (map.get(merchant) || 0) + spend);
+    return map;
+  }, new Map())
+)
+  .map(([merchant, amount]) => ({ merchant, amount }))
+  .sort((a, b) => b.amount - a.amount)
+  .slice(0, 10);
+
+const topSectorsSnapshot = Array.from(
+  parsed.reduce((map, x) => {
+    const sector = x.sector || "Other / Unmapped";
+    const spend = x.amt < 0 ? Math.abs(x.amt) : 0;
+    if (!spend || sector === "Other / Unmapped") return map;
+
+    map.set(sector, (map.get(sector) || 0) + spend);
+    return map;
+  }, new Map())
+)
+  .map(([sector, amount]) => ({ sector, amount }))
+  .sort((a, b) => b.amount - a.amount)
+  .slice(0, 5);
+
+const tickersSnapshot = Array.from(
+  new Set(parsed.map((x) => String(x.ticker || "").toUpperCase().trim()).filter(Boolean))
+);
+
+await insightSnapshotRef.set(
+  {
+    uid,
+    batchId,
+    source,
+    filename,
+    createdAt: nowTS(),
+    updatedAt: nowTS(),
+
+    timeframeDays: windowMeta.days,
+    asOfDate: windowMeta.asOf,
+    mode: windowMeta.mode,
+    windowKey: windowMeta.windowKey,
+
+    totalSpend: batchStats.totalSpend,
+    uniqueTxCount,
+    coverageDays: coverageDaysCount,
+
+    topMerchants: topMerchantsSnapshot,
+    topSectors: topSectorsSnapshot,
+    tickers: tickersSnapshot,
+
+    duplicateRisk: {
+      exactDupes,
+      dupRowRate,
+      jaccardOverlap,
+      totalSpendDeltaPct,
+      reasons
+    },
+
+    quality: {
+      hardFail,
+      flagged,
+      minCoverageDays
+    },
+
+    cardStatus: "ready_for_generation"
+  },
+  { merge: true }
+);
+
+return jsonResponse(200, {
+  ok: true,
+  uid,
+  batchId,
+  windowKey: windowMeta.windowKey,
+  decision,
+  activated,
+  reasons,
+  stats: batchStats,
+
+  insightSnapshot: {
+    id: batchId,
+    status: "ready_for_generation"
+  },
+
+  duplicateRisk: {
+    possibleDuplicate:
+  isRepeatUpload ||
+  exactDupes > 0 ||
+  dupRowRate > 0.15 ||
+  reasons.includes("LOW_OVERLAP") ||
+  reasons.includes("HIGH_SPEND_DELTA"),
+    exactDupes,
+    dupRowRate,
+    jaccardOverlap,
+    totalSpendDeltaPct,
+    reasons
+  }
+});
   } catch (e) {
     console.error("ingest-upload error:", e);
     return jsonResponse(500, { error: String(e?.message || e) });

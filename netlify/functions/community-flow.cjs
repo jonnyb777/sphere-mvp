@@ -268,9 +268,15 @@ async function txHasEligibleBatch(uid, tx, batchMetaCache) {
 
 function cleanMerchantDisplayName(name = "") {
   let s = String(name || "").toUpperCase().trim();
+  const processorMatch = s.match(/^(GOOGLE|SQ|TST|PAYPAL|APPLE)\s*\*\s*(.+)$/i);
+if (processorMatch?.[2]) {
+  s = processorMatch[2].trim().toUpperCase();
+}
 
   // Known brand rules FIRST
   const rules = [
+    ["PANDORA", "Pandora"],
+    ["MICROSOFT", "Microsoft"],
     ["STARBUCKS", "Starbucks"],
     ["BOWLERO", "Bowlero"],
     ["CHICK-FIL-A", "Chick-fil-A"],
@@ -342,44 +348,6 @@ function pickKeyForTickerRow(tx) {
   if (m) return { key: `M:${m}`, ticker: null };
 
   return { key: null, ticker: null };
-}
-
-function cleanMerchantDisplayName(name = "") {
-  let s = String(name || "").toUpperCase().trim();
-
-  s = s
-    .replace(/\bPOS DEBIT\b/g, "")
-    .replace(/\bWEB ID:\s*\d+/g, "")
-    .replace(/\b\d{2}\/\d{2}\b/g, "")
-    .replace(/\b\d{1,2}\s\d{1,2}\b/g, "")
-    .replace(/\bCA\b|\bNY\b|\bTX\b|\bFL\b|\bWA\b/g, "")
-    .replace(/#\d+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const rules = [
-    ["CVS", "CVS Pharmacy"],
-    ["WALGREENS", "Walgreens"],
-    ["TARGET", "Target"],
-    ["AMAZON", "Amazon"],
-    ["APPLE", "Apple"],
-    ["RALPHS", "Ralphs"],
-    ["COSTCO", "Costco"],
-    ["MARRIOTT", "Marriott"],
-    ["MACY", "Macy's"],
-    ["CHICK FIL A", "Chick-fil-A"],
-    ["NETFLIX", "Netflix"],
-    ["DELL", "Dell"],
-    ["CANVA", "Canva"]
-  ];
-
-  for (const [needle, label] of rules) {
-    if (s.includes(needle)) return label;
-  }
-
-  return s
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 exports.handler = async (event) => {

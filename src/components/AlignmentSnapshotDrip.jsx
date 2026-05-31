@@ -1,12 +1,20 @@
 // FILE: src/components/AlignmentSnapshotDrip.jsx
 import { useMemo, useState } from "react";
-import { classifyMerchant } from "../utils/merchantSectorMap";
+import { classifyMerchant, normalizeMerchantName } from "../utils/merchantSectorMap";
 import { rollUpSector, toEtfSectorName } from "../utils/sectorRollup";
+import SignalChip from "./ui/SignalChip";
 
 function money(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
   return `$${Math.abs(v).toFixed(2)}`;
+}
+
+function tierTone(tier) {
+  if (tier === "Tier 1") return "positive";
+  if (tier === "Tier 2") return "market";
+  if (tier === "Tier 3") return "neutral";
+  return "neutral";
 }
 
 function parseDateAny(tx) {
@@ -98,6 +106,7 @@ export default function AlignmentSnapshotDrip({
   timeMode = "trailing"
 }) {
   const [showTierRules, setShowTierRules] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   
 // Use the same selected window for Alignment that Drip/Flow controls use.
 const alignedTransactions = useMemo(() => {
@@ -148,7 +157,7 @@ const topTickers = useMemo(() => {
 
     const prev = map.get(tkr);
     if (!prev) {
-      map.set(tkr, { ticker: tkr, amount, exampleMerchant: merchant, sectorBucket });
+      map.set(tkr, { ticker: tkr, amount, exampleMerchant: normalizeMerchantName(merchant), sectorBucket });
     } else {
       prev.amount += amount;
       map.set(tkr, prev);
@@ -221,9 +230,38 @@ const topTickers = useMemo(() => {
 
   return (
   <div>
-    <p style={{ marginTop: 0 }}>
-      Alignment shows how your spending overlaps with market sector leadership and your runner list.
-    </p>
+    <div style={{ marginTop: 0, marginBottom: "0.75rem" }}>
+  <div style={{ fontWeight: 900, marginBottom: 8 }}>
+    Your spending compared with market leadership.
+  </div>
+
+  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+  {Array.from(
+    new Map(
+      rows
+        .filter((r) => r.tier && r.tier !== "—")
+        .sort((a, b) => {
+          const rank = {
+            "Tier 1": 1,
+            "Tier 2": 2,
+            "Tier 3": 3
+          };
+
+          return (rank[a.tier] || 99) - (rank[b.tier] || 99);
+        })
+        .map((r) => [`${r.tier}-${r.label}`, r])
+    ).values()
+  )
+    .slice(0, 4)
+    .map((r) => (
+      <SignalChip
+        key={`${r.ticker}-${r.tier}`}
+        label={`${r.tier}: ${r.label}`}
+        tone={tierTone(r.tier)}
+      />
+    ))}
+</div>
+</div>
 
     <div
       style={{
@@ -239,7 +277,23 @@ const topTickers = useMemo(() => {
       <b>Timing note:</b> {timingText}
     </div>
 
-      <div style={{ marginTop: "0.5rem", overflowX: "auto" }}>
+      <div style={{ marginTop: "0.75rem" }}>
+  <button
+    type="button"
+    onClick={() => setShowDetails((v) => !v)}
+    style={{
+      padding: "0.45rem 0.7rem",
+      borderRadius: 10,
+      border: "1px solid #ddd",
+      cursor: "pointer",
+      fontWeight: 800
+    }}
+  >
+    {showDetails ? "Hide details" : "Show details"}
+  </button>
+
+  {showDetails ? (
+    <div style={{ marginTop: "0.5rem", overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.92rem" }}>
           <thead>
             <tr>
@@ -247,9 +301,8 @@ const topTickers = useMemo(() => {
               <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Example Merchant</th>
               <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Spend</th>
               <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Spend Category</th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Market Bucket</th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Tier</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Market Theme</th>
+              <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
             </tr>
           </thead>
 
@@ -275,9 +328,10 @@ const topTickers = useMemo(() => {
                 <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.etfSector}</td>
 
                 <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                  <b>{r.tier}</b>
-                  <div style={{ fontStyle: "italic", marginTop: 2 }}>{r.label}</div>
-                  <div style={{ fontSize: "0.85rem", marginTop: 4 }}>{r.reason}</div>
+                  <SignalChip
+  label={r.tier === "—" ? "No signal" : r.label}
+  tone={tierTone(r.tier)}
+/>
                 </td>
               </tr>
             ))}
@@ -309,8 +363,10 @@ const topTickers = useMemo(() => {
               <div style={{ marginTop: "0.35rem" }}>Tier flags are informational only — not recommendations.</div>
             </div>
           ) : null}
-        </div>
+                </div>
       </div>
-    </div>
+    ) : null}
+  </div>
+</div>
   );
 }

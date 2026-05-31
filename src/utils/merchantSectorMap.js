@@ -28,12 +28,53 @@ export const SPHERE_SECTORS = [
   "Other / Unmapped"
 ];
 
-// Normalize messy merchant strings
+// Normalize messy merchant strings into clean display names.
+// This is used BEFORE classification, so processor prefixes like
+// "GOOGLE *Pandora Music" do not incorrectly become Google.
 export function normalizeMerchantName(raw = "") {
-  return String(raw || "")
-    .toLowerCase()
+  let s = String(raw || "").trim();
+
+  // Payment processor prefixes — real merchant often comes after "*"
+  const processorMatch = s.match(/^(GOOGLE|SQ|TST|PAYPAL|APPLE)\s*\*\s*(.+)$/i);
+  if (processorMatch?.[2]) {
+    s = processorMatch[2].trim();
+  }
+
+  const rules = [
+    [/GOOGLE\s*\*\s*PANDORA.*/i, "Pandora"],
+    [/GOOGLE\s*\*\s*MICROSOFT.*/i, "Microsoft"],
+    [/PANDORA.*/i, "Pandora"],
+    [/MICROSOFT.*/i, "Microsoft"],
+
+    [/UNITED\s+FIN.*CAS.*INS.*/i, "United Financial Casualty Insurance"],
+    [/TARGET.*/i, "Target"],
+    [/RALPHS.*/i, "Ralphs"],
+    [/NETFLIX.*/i, "Netflix"],
+    [/STARBU?CKS.*/i, "Starbucks"],
+    [/CVS.*/i, "CVS Pharmacy"],
+    [/UBER.*/i, "Uber"],
+    [/AMAZON.*/i, "Amazon"],
+    [/APPLE.*/i, "Apple"],
+    [/GOOGLE.*/i, "Google"]
+  ];
+
+  for (const [pattern, label] of rules) {
+    if (pattern.test(s)) return label;
+  }
+
+  return s
+    .replace(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/g, "")
+    .replace(/\b\d{10}\b/g, "")
+    .replace(/\b\d{2}\/\d{2}\b/g, "")
+    .replace(/\bLOS ANGELES\b/gi, "")
+    .replace(/\bCULVER CITY\b/gi, "")
+    .replace(/\bWESTCHESTER\b/gi, "")
+    .replace(/\bWILMINGTON\b/gi, "")
+    .replace(/\bDE\b/gi, "")
+    .replace(/\bCA\d+\b/gi, "")
+    .replace(/\bCA\b/gi, "")
+    .replace(/#\d+/g, "")
     .replace(/\s+/g, " ")
-    .replace(/[^\w\s&'+\-./]/g, "") // keep letters/numbers/space/&/'/+/-/./
     .trim();
 }
 
@@ -145,6 +186,13 @@ const MERCHANT_RULES = [
   { re: /\bspotify\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "SPOT" },
   { re: /\bhulu\b|\bdisney\+?\b|\bdisney plus\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "DIS" },
   { re: /\bamazon prime\b|\bprime video\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "AMZN" },
+  { re: /\bpandora\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "SIRI", tags: ["brand:Pandora", "parent:SiriusXM"] },
+  { re: /\bmicrosoft one\b|\bmicrosoft\b/i, sector: "Subscriptions", subcategory: "SaaS", ticker: "MSFT" },
+  { re: /\byoutube\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: "GOOGL", tags: ["brand:YouTube", "parent:Alphabet"] },
+  { re: /\binstagram\b/i, sector: "Technology", ticker: "META", tags: ["brand:Instagram", "parent:Meta"] },
+  { re: /\bwhole foods\b|\bwholefoods\b/i, sector: "Grocery", ticker: "AMZN", tags: ["brand:Whole Foods", "parent:Amazon"] },
+  { re: /\bxbox\b/i, sector: "Technology", ticker: "MSFT", tags: ["brand:Xbox", "parent:Microsoft"] },
+  { re: /\bicloud\b/i, sector: "Subscriptions", subcategory: "Digital Services", ticker: "AAPL", tags: ["brand:iCloud", "parent:Apple"] },
 
   // ✅ NEW: SiriusXM exports
   { re: /\bsxm\b|\bsirius\s*xm\b|\bsiriusxm\b/i, sector: "Subscriptions", subcategory: "Streaming", ticker: null },
@@ -250,7 +298,8 @@ function keywordHeuristics(normalized) {
 }
 
 export function classifyMerchant(merchant = "") {
-  const m = normalizeMerchantName(merchant);
+  const cleanMerchant = normalizeMerchantName(merchant);
+  const m = cleanMerchant.toLowerCase();
   if (!m) return { sector: "Other / Unmapped", ticker: null };
 
   for (const r of MERCHANT_RULES) {

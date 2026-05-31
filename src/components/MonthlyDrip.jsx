@@ -1,7 +1,7 @@
 // FILE: src/components/MonthlyDrip.jsx
 import { useEffect, useMemo, useState } from "react";
 import { UI, SummaryBand, SubHeaderRow, TextLink } from "./SectionUI";
-import { classifyMerchant } from "../utils/merchantSectorMap";
+import { classifyMerchant, normalizeMerchantName } from "../utils/merchantSectorMap";
 
 function parseDateAny(tx) {
   const raw =
@@ -18,8 +18,28 @@ function parseDateAny(tx) {
     null;
 
   if (!raw) return null;
-  const dt = new Date(raw);
+
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  // Handles YYYY-MM-DD without timezone drift
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0, 0);
+  }
+
+  // Handles 1/12/2026 or 01/12/2026
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slash) {
+    let [, m, d, y] = slash;
+    if (y.length === 2) y = `20${y}`;
+    return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0, 0);
+  }
+
+  const dt = new Date(s);
   if (Number.isNaN(dt.getTime())) return null;
+
   return dt;
 }
 
@@ -37,15 +57,27 @@ function money(n) {
 
 function withinWindow(dt, { timeframeDays, asOfDate, timeMode }) {
   if (!dt) return false;
-  const iso = asOfDate || new Date().toISOString().slice(0, 10);
-  const asOf = new Date(iso);
-  if (Number.isNaN(asOf.getTime())) return true;
 
-  const end = timeMode === "monthEnd" ? endOfMonth(iso) : new Date(iso);
-  if (!end) return true;
+  const iso = asOfDate || new Date().toISOString().slice(0, 10);
+  const asOfParts = String(iso).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+
+  let end;
+  if (asOfParts) {
+    const [, y, m, d] = asOfParts;
+    end =
+      timeMode === "monthEnd"
+        ? new Date(Number(y), Number(m), 0, 23, 59, 59, 999)
+        : new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999);
+  } else {
+    end = new Date(iso);
+    end.setHours(23, 59, 59, 999);
+  }
+
+  if (Number.isNaN(end.getTime())) return true;
 
   const start = new Date(end);
   start.setDate(start.getDate() - Number(timeframeDays || 30));
+  start.setHours(0, 0, 0, 0);
 
   return dt >= start && dt <= end;
 }
@@ -107,7 +139,7 @@ function getSpend(tx) {
 function aggregateByMerchant(txs) {
   const map = new Map();
   for (const tx of txs) {
-    const merchant = getMerchant(tx);
+    const merchant = normalizeMerchantName(getMerchant(tx));
     const spend = getSpend(tx);
     if (!merchant || spend === null) continue;
     map.set(merchant, (map.get(merchant) || 0) + spend);
@@ -118,9 +150,9 @@ function aggregateByMerchant(txs) {
 }
 
 function aggregateBySector(txs) {
-  const map = new Map();
+    const map = new Map();
   for (const tx of txs) {
-    const merchant = getMerchant(tx);
+    const merchant = normalizeMerchantName(getMerchant(tx));
     const spend = getSpend(tx);
     if (!merchant || spend === null) continue;
 
@@ -257,41 +289,47 @@ export default function MonthlyDrip({
   const hasDated = datedInWindow.length > 0;
   const hasAllTime = undated.length > 0;
 
-  return (
+    return (
     <div style={{ fontSize: UI.FONT_BODY, lineHeight: 1.45 }}>
       <p style={{ marginTop: 0, fontSize: UI.FONT_BODY }}>
-        Monthly Drip summarizes your spending patterns from uploaded transactions.
-      </p>
+  Your personal spending snapshot for this window.
+</p>
 
       {/* DATED TIMEFRAME SUMMARY */}
       <SummaryBand>
-        <div style={{ fontSize: UI.FONT_BODY }}>
-          <b>Selected timeframe insight:</b>{" "}
-          {hasDated ? (
-            <>
-              Most of your <b>dated</b> spending in this timeframe clustered in <b>{highestSectorWindow}</b>.
-            </>
-          ) : (
-            <>No <b>dated</b> transactions found in the selected timeframe.</>
-          )}
-        </div>
+  <div style={{ fontSize: UI.FONT_BODY }}>
+    <b>Snapshot:</b>{" "}
+    {hasDated ? (
+      <>
+        We found <b>{datedInWindow.length}</b> dated transactions in this window. Your largest spending area was{" "}
+        <b>{highestSectorWindow}</b>.
+      </>
+    ) : arr.length ? (
+      <>
+        We found uploaded transactions, but none matched this selected window. Try changing the as-of date or widening the
+        timeframe.
+      </>
+    ) : (
+      <>Upload transactions to generate your Drip summary.</>
+    )}
+  </div>
 
-        <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-          Timeframe spend (dated): <b>{money(totalSpendWindow)}</b> · Top 10 merchants: <b>{money(topMerchantTotalWindow)}</b> ·
-          Top 5 sectors: <b>{money(topSectorTotalWindow)}</b>
-        </div>
+  <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+    Timeframe spend (dated): <b>{money(totalSpendWindow)}</b> · Top 10 merchants:{" "}
+    <b>{money(topMerchantTotalWindow)}</b> · Top 5 sectors: <b>{money(topSectorTotalWindow)}</b>
+  </div>
 
-        {hasAllTime ? (
-          <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-            All-time spend (undated uploads): <b>{money(totalSpendAllTime)}</b> · Top 10 merchants:{" "}
-            <b>{money(topMerchantTotalAllTime)}</b> · Top 5 sectors: <b>{money(topSectorTotalAllTime)}</b>
-          </div>
-        ) : null}
-      </SummaryBand>
+  {hasAllTime ? (
+    <div style={{ marginTop: 6, fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+      All-time spend (undated uploads): <b>{money(totalSpendAllTime)}</b> · Top 10 merchants:{" "}
+      <b>{money(topMerchantTotalAllTime)}</b> · Top 5 sectors: <b>{money(topSectorTotalAllTime)}</b>
+    </div>
+  ) : null}
+</SummaryBand>
 
       {/* DATED TIMEFRAME MERCHANTS */}
       <SubHeaderRow
-        title="Top 10 Merchants (Spend · selected timeframe)"
+        title="Top Merchants"
         open={openMerchants}
         onToggle={() => setOpenMerchants((v) => !v)}
         rightSlot={
@@ -339,7 +377,7 @@ export default function MonthlyDrip({
 
       {/* DATED TIMEFRAME SECTORS */}
       <SubHeaderRow
-        title="Top Sectors (Spend · selected timeframe)"
+        title="Top Sectors"
         open={openSectors}
         onToggle={() => setOpenSectors((v) => !v)}
         rightSlot={

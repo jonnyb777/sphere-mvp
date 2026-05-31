@@ -348,7 +348,12 @@ export default function TransactionUploader({ user, onUpload }) {
       })
     });
 
-    return res.ok;
+    const json = await res.json().catch(() => ({}));
+
+return {
+  ok: res.ok,
+  ...json
+};
   }
 
   const handleUpload = async () => {
@@ -390,13 +395,24 @@ export default function TransactionUploader({ user, onUpload }) {
       onUpload?.(normalized);
 
       // Secure ingest (required for your live flow)
-      const ok = await sendIngest({ normalizedRows: normalized, filename: file.name });
+      const res = await sendIngest({
+  normalizedRows: normalized,
+  filename: file.name
+});
 
-      if (ok) {
-        setLastStatus(`Upload complete — ${normalized.length} rows (${kind}). Your data is now flowing into Sphere.`);
-      } else {
-        setLastStatus("Your bubble popped. Please try again in a moment.");
-      }
+if (res?.ok) {
+  if (res?.duplicateRisk?.possibleDuplicate) {
+    setLastStatus(
+      `Upload complete — ${normalized.length} rows (${kind}). Possible duplicate upload detected, but your data was still processed.`
+    );
+  } else {
+    setLastStatus(
+      `Upload complete — ${normalized.length} rows (${kind}). Your data is now flowing into Sphere.`
+    );
+  }
+} else {
+  setLastStatus("Your bubble popped. Please try again in a moment.");
+}
     } catch (err) {
       console.error(err);
       setLastStatus("Your bubble popped. Please try again in a moment.");

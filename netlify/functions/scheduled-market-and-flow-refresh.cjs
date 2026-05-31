@@ -98,7 +98,8 @@ exports.handler = async () => {
       return json(500, { error: "Missing MARKET_WARM_SECRET" });
     }
 
-    const marketRefreshDays = [30];
+    const companyMarketRefreshDays = [30];
+const sectorEtfMarketRefreshDays = [30, 60, 90];
 const flowRebuildDays = [30, 60, 90];
 
     const baseTickers = [
@@ -122,11 +123,17 @@ const flowRebuildDays = [30, 60, 90];
   mode: "trailing"
 });
 
-    const chunks = chunkArray(tickersToRefresh, 100);
+    const sectorEtfs = [
+  "XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLB", "XLK", "XLU", "XLRE"
+];
+
+const companyTickersToRefresh = tickersToRefresh.filter((t) => !sectorEtfs.includes(t));
+const companyChunks = chunkArray(companyTickersToRefresh, 100);
+const sectorEtfChunks = chunkArray(sectorEtfs, 100);
     const results = [];
 
-    for (const days of marketRefreshDays) {
-  for (const chunk of chunks) {
+    for (const days of sectorEtfMarketRefreshDays) {
+  for (const chunk of sectorEtfChunks) {
     const url =
       `${siteUrl}/.netlify/functions/market-refresh` +
       `?days=${days}&mode=trailing&secret=${encodeURIComponent(secret)}` +
@@ -136,7 +143,28 @@ const flowRebuildDays = [30, 60, 90];
     const body = await res.json().catch(() => ({}));
 
     results.push({
-      type: "market-refresh",
+      type: "market-refresh-sector-etfs",
+      days,
+      requested: chunk.length,
+      status: res.status,
+      cached: Number(body.cached || 0),
+      failed: Number(body.failed || 0)
+    });
+  }
+}
+
+for (const days of companyMarketRefreshDays) {
+  for (const chunk of companyChunks) {
+    const url =
+      `${siteUrl}/.netlify/functions/market-refresh` +
+      `?days=${days}&mode=trailing&secret=${encodeURIComponent(secret)}` +
+      `&tickers=${encodeURIComponent(chunk.join(","))}`;
+
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+
+    results.push({
+      type: "market-refresh-company-tickers",
       days,
       requested: chunk.length,
       status: res.status,
@@ -173,7 +201,8 @@ for (const days of flowRebuildDays) {
     tickerCount: tickers.length,
     tickersToRefreshCount: tickersToRefresh.length,
     queuedTickerCount: queuedTickers.length,
-    marketRefreshDays,
+    companyMarketRefreshDays,
+    sectorEtfMarketRefreshDays,
     flowRebuildDays,
     lastResults: results.slice(-20)
   },
@@ -184,6 +213,8 @@ for (const days of flowRebuildDays) {
       ok: true,
       tickerCount: tickers.length,
     tickersToRefreshCount: tickersToRefresh.length,
+    companyTickersToRefreshCount: companyTickersToRefresh.length,
+    sectorEtfCount: sectorEtfs.length,
     queuedTickerCount: queuedTickers.length,
       results
     });

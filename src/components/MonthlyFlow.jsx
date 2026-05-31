@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TimeframeControls from "./TimeframeControls";
 import { Card } from "./ui/UiKit";
+import SignalChip from "./ui/SignalChip";
 import { UI, SectionBand, SummaryBand, SubHeaderRow, usePersistedBool, Badge, MiniStat } from "./SectionUI";
 import { rollUpSector, toEtfSectorName } from "../utils/sectorRollup";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
@@ -9,9 +10,23 @@ import { auth, db } from "../firebase";
 import { markFirstFlowView } from "../utils/userStats";
 
 function cleanMerchantLabel(name = "") {
-  const s = String(name || "").toUpperCase();
+  let cleaned = String(name || "");
+
+  const processorMatch = cleaned.match(
+    /^(GOOGLE|SQ|TST|PAYPAL|APPLE)\s*\*\s*(.+)$/i
+  );
+
+  if (processorMatch?.[2]) {
+    cleaned = processorMatch[2].trim();
+  }
+
+  const s = cleaned.toUpperCase();
 
   const rules = [
+    ["PANDORA", "Pandora"],
+    ["MICROSOFT", "Microsoft"],
+    ["GOOGLE *PANDORA", "Pandora"],
+    ["GOOGLE *MICROSOFT", "Microsoft"],
     ["STARBUCKS", "Starbucks"],
     ["BOWLERO", "Bowlero"],
     ["CHICK-FIL-A", "Chick-fil-A"],
@@ -304,7 +319,12 @@ async function saveConsent(nextValue) {
 
   const [openMonthlyMerchants, setOpenMonthlyMerchants] = usePersistedBool("sphere:flow:open:monthly:merchants", false);
   const [openMonthlySectors, setOpenMonthlySectors] = usePersistedBool("sphere:flow:open:monthly:sectors", false);
+  const [openCommunityMomentum, setOpenCommunityMomentum] = usePersistedBool("sphere:flow:open:communityMomentum", false);
   const [openSignalsExplained, setOpenSignalsExplained] = usePersistedBool("sphere:flow:open:signalsExplained", false);
+  const [openFlowCompareDetails, setOpenFlowCompareDetails] = usePersistedBool(
+  "sphere:flow:open:compareDetails",
+  false
+);
 
   const showMonthly = section === "all" || section === "monthly";
   const showPulse = section === "all" || section === "pulse";
@@ -777,7 +797,7 @@ useEffect(() => {
           {allowMonthlyBody ? (
             <div style={{ paddingTop: embedded ? 0 : "0.75rem" }}>
               <p style={{ marginTop: 0, fontSize: UI.FONT_BODY }}>
-                Monthly Flow is part of the paid Flow subscription. This preview shows anonymized community-wide aggregate trends — admin fed.
+                Aggregate community spending patterns for this window.
               </p>
 
               <SummaryBand>
@@ -884,46 +904,46 @@ useEffect(() => {
 
 {showMonthly && allowMonthlyBody ? (
   <div style={{ marginTop: "1rem" }}>
-    <div
-      style={{
-        fontSize: UI.FONT_HEADER,
-        fontWeight: 900,
-        color: UI.PRIMARY
-      }}
-    >
-      Community Momentum
-    </div>
+    <SubHeaderRow
+      title="Community Momentum"
+      open={openCommunityMomentum}
+      onToggle={() => setOpenCommunityMomentum((v) => !v)}
+    />
 
-    <div
-      style={{
-        marginTop: "0.5rem",
-        fontSize: UI.FONT_BODY,
-        opacity: 0.9
-      }}
-    >
-      Momentum tracks participation, activity frequency, and breadth — not dollar spend.
-    </div>
+    {openCommunityMomentum ? (
+      <>
+        <div
+          style={{
+            marginTop: "0.5rem",
+            fontSize: UI.FONT_BODY,
+            opacity: 0.9
+          }}
+        >
+          Momentum tracks participation, activity frequency, and breadth — not dollar spend.
+        </div>
 
-    {Array.isArray(communityMomentum.topMerchants) &&
-    communityMomentum.topMerchants.length ? (
-      <ol style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
-        {communityMomentum.topMerchants.map((x) => (
-          <li key={`${x.merchant}-${x.sector}`}>
-            <b>{cleanMerchantLabel(x.merchant)}</b>
-            {" — "}
-            {x.count} events
-            {" · "}
-            {x.users} users
-            {" · "}
-            {x.sector}
-          </li>
-        ))}
-      </ol>
-    ) : (
-      <p style={{ marginTop: "0.5rem" }}>
-        No community momentum data yet.
-      </p>
-    )}
+        {Array.isArray(communityMomentum.topMerchants) &&
+        communityMomentum.topMerchants.length ? (
+          <ol style={{ marginTop: "0.75rem", fontSize: UI.FONT_BODY }}>
+            {communityMomentum.topMerchants.map((x) => (
+              <li key={`${x.merchant}-${x.sector}`}>
+                <b>{cleanMerchantLabel(x.merchant)}</b>
+                {" — "}
+                {x.count} events
+                {" · "}
+                {x.users} users
+                {" · "}
+                {x.sector}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p style={{ marginTop: "0.5rem" }}>
+            No community momentum data yet.
+          </p>
+        )}
+      </>
+    ) : null}
   </div>
 ) : null}
 
@@ -960,8 +980,13 @@ useEffect(() => {
                     border: `1px solid ${UI.SOFT_BORDER}`
                   }}
                 >
-                  <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Flow Pulse Narrative</div>
-                  <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>{flowPulseNarrative}</div>
+                  <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>
+                    Flow Pulse
+                  </div>
+
+                  <div style={{ marginTop: "0.35rem", fontSize: UI.FONT_BODY }}>
+                    Community behavior is being mapped into market sectors and runners for this window.
+                  </div>
                   <div
                     style={{
                       marginTop: "0.5rem",
@@ -1015,7 +1040,15 @@ useEffect(() => {
                     <li key={x.ticker} style={{ marginBottom: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                         <b>{x.sector}</b> — <b>{x.ticker}</b> <VerifiedBadge item={x} />
-                        <span style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>(Signal: {x.signal})</span>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {splitSignalLine(x.signal).parts.map((part) => (
+                            <SignalChip
+                              key={`${x.ticker}-${part}`}
+                              label={part}
+                              tone="market"
+                            />
+                          ))}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -1074,7 +1107,14 @@ useEffect(() => {
   </div>
 ) : null}
 
-              <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
+              <SubHeaderRow
+  title="Compare details"
+  open={openFlowCompareDetails}
+  onToggle={() => setOpenFlowCompareDetails((v) => !v)}
+/>
+
+{openFlowCompareDetails ? (
+  <div style={{ marginTop: "0.9rem", overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: UI.FONT_BODY }}>
                   <thead>
                     <tr>
@@ -1083,7 +1123,6 @@ useEffect(() => {
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Mapped Sector</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Signal</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Count</th>
-                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Sector Leader Proxy</th>
                       <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Flags</th>
                     </tr>
                   </thead>
@@ -1123,24 +1162,20 @@ useEffect(() => {
                         <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
                           {r.count === null ? "—" : <b>{r.count}</b>}
                         </td>
-
+                    
                         <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <span>{r.etfSector}</span>
-                            {r.flags.leader ? <Badge tone="good">Top 5 leader</Badge> : <Badge tone="neutral">—</Badge>}
-                          </div>
-                        </td>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {r.flags.leader ? (
+                              <SignalChip label="Leader" tone="positive" />
+                            ) : null}
 
-                        <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              {r.flags.leader ? <Badge tone="good">Leader</Badge> : <Badge tone="neutral">Not leader</Badge>}
-                              {r.flags.communitySpend ? <Badge tone="neutral">Community spend</Badge> : <Badge tone="neutral">No spend</Badge>}
-                              {r.flags.runner ? <Badge tone="info">Runner</Badge> : <Badge tone="neutral">Not runner</Badge>}
-                            </div>
-                            <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
-                              <b>Trigger:</b> {r.flags.trigger}
-                            </div>
+                            {r.flags.communitySpend ? (
+                              <SignalChip label="Community Spend" tone="neutral" />
+                            ) : null}
+
+                            {r.flags.runner ? (
+                              <SignalChip label="Runner" tone="market" />
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -1152,7 +1187,8 @@ useEffect(() => {
                   Signal + count come from the admin community feed. Sector leader proxy comes from ETF leaders (market function).
                   Informational only — not recommendations.
                 </div>
-              </div>
+                            </div>
+            ) : null}
 
               <SubHeaderRow
                 title="Signals explained (preview)"

@@ -6,12 +6,14 @@ import {
   createUserWithEmailAndPassword,
   isSignInWithEmailLink,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   sendSignInLinkToEmail,
   signInWithEmailAndPassword,
   signInWithEmailLink,
   signInWithPopup
 } from "firebase/auth";
 import { auth } from "../firebase";
+import { ensureUserProfile } from "../utils/userProfile";
 
 /**
  * Sphere Login (Sphere x Schwab styling)
@@ -62,6 +64,7 @@ export default function Login() {
 
   // password mode
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [pwAction, setPwAction] = useState("login"); // login | signup
 
   // email link mode
@@ -234,13 +237,25 @@ export default function Login() {
     setStatus({ type: "", msg: "" });
 
     try {
-      await signInWithEmailAndPassword(auth, normalizeEmail(email), password);
+      const result = await signInWithEmailAndPassword(
+  auth,
+  normalizeEmail(email),
+  password
+);
+
+await ensureUserProfile(result.user);
       setStatus({ type: "ok", msg: "Signed in." });
       // Redirect handled by onAuthStateChanged
     } catch (e) {
       console.error("pwLogin error:", e);
       const msg = String(e?.message || "");
-      if (msg.toLowerCase().includes("user-not-found")) {
+      if (msg.includes("USERNAME_TAKEN")) {
+  setStatus({
+    type: "warn",
+    msg: "That username is already taken. Try another one."
+  });
+  return;
+}if (msg.toLowerCase().includes("user-not-found")) {
         setStatus({ type: "warn", msg: "No account found for that email. Try Sign up." });
       } else if (msg.toLowerCase().includes("wrong-password") || msg.toLowerCase().includes("invalid-credential")) {
         setStatus({ type: "bad", msg: "Incorrect password. Try again." });
@@ -259,7 +274,15 @@ export default function Login() {
     setStatus({ type: "", msg: "" });
 
     try {
-      await createUserWithEmailAndPassword(auth, normalizeEmail(email), password);
+      const result = await createUserWithEmailAndPassword(
+        auth,
+        normalizeEmail(email),
+        password
+      );
+
+      await ensureUserProfile(result.user, {
+        username
+      });
       setStatus({ type: "ok", msg: "Account created. You’re signed in." });
       // Redirect handled by onAuthStateChanged
     } catch (e) {
@@ -276,6 +299,26 @@ export default function Login() {
       setBusy(false);
     }
   }
+
+  async function resetPassword() {
+  if (!canEmail || busy) {
+    setStatus({ type: "warn", msg: "Enter your email first." });
+    return;
+  }
+
+  setBusy(true);
+  setStatus({ type: "", msg: "" });
+
+  try {
+    await sendPasswordResetEmail(auth, normalizeEmail(email));
+    setStatus({ type: "ok", msg: "Password reset email sent. Check your inbox." });
+  } catch (e) {
+    console.error("resetPassword error:", e);
+    setStatus({ type: "bad", msg: "Could not send reset email. Check the email and try again." });
+  } finally {
+    setBusy(false);
+  }
+}
 
   // ---------- Email Link: send ----------
   async function sendLink() {
@@ -321,7 +364,9 @@ export default function Login() {
 
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+
+await ensureUserProfile(result.user);
       setStatus({ type: "ok", msg: "Signed in with Google." });
       // Redirect handled by onAuthStateChanged
     } catch (e) {
@@ -448,7 +493,7 @@ export default function Login() {
                   setStatus({ type: "", msg: "" });
                 }}
               >
-                Log in
+                Log In
               </button>
               <button
                 type="button"
@@ -458,9 +503,24 @@ export default function Login() {
                   setStatus({ type: "", msg: "" });
                 }}
               >
-                Sign up
+                Create Account
               </button>
             </div>
+
+{pwAction === "signup" ? (
+  <>
+    <label style={{ fontWeight: 800, color: "var(--s-primary, #123764)", fontSize: 13 }}>
+      Username
+    </label>
+    <input
+      value={username}
+      onChange={(e) => setUsername(e.target.value)}
+      placeholder="@yourname"
+      autoComplete="username"
+      style={inputStyle}
+    />
+  </>
+) : null}
 
             <label style={{ fontWeight: 800, color: "var(--s-primary, #123764)", fontSize: 13 }}>Password</label>
             <input
@@ -472,13 +532,32 @@ export default function Login() {
               style={inputStyle}
             />
 
+            {pwAction === "login" ? (
+  <button
+    type="button"
+    onClick={resetPassword}
+    disabled={busy}
+    style={{
+      border: "none",
+      background: "transparent",
+      color: "var(--s-secondary, #3f6fa5)",
+      fontWeight: 800,
+      cursor: "pointer",
+      padding: 0,
+      textAlign: "left"
+    }}
+  >
+    Forgot password?
+  </button>
+) : null}
+
             <button
               type="button"
               disabled={!canEmail || !canPassword || busy}
               onClick={pwAction === "signup" ? pwSignup : pwLogin}
               style={primaryBtnStyle(canEmail && canPassword && !busy)}
             >
-              {busy ? "Working…" : pwAction === "signup" ? "Create account →" : "Log in →"}
+              {busy ? "Working…" : "Continue →"}
             </button>
 
             <div style={smallNote}>

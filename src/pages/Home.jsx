@@ -11,6 +11,7 @@ import AutoInvestPreview from "../components/AutoInvestPreview";
 import AlignmentSnapshotDrip from "../components/AlignmentSnapshotDrip";
 import SphericalFeed from "../components/SphericalFeed";
 import Admin from "./Admin";
+import UploadHistory from "../components/UploadHistory";
 
 import { classifyMerchant } from "../utils/merchantSectorMap";
 import { hasFlowAccess as computeHasFlowAccess } from "../utils/entitlements";
@@ -261,17 +262,50 @@ function FlowGate({ hasAccess, onUpgradeClick, children }) {
   );
 }
 
+function SubTabs({ value, onChange, tabs }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        flexWrap: "wrap",
+        marginBottom: "1rem"
+      }}
+    >
+      {tabs.map((t) => {
+        const active = value === t.value;
+
+        return (
+          <button
+            key={t.value}
+            type="button"
+            onClick={() => onChange(t.value)}
+            style={{
+              padding: "9px 14px",
+              borderRadius: 999,
+              border: active
+                ? `1px solid ${UI.PRIMARY}`
+                : `1px solid ${UI.SOFT_BORDER}`,
+              background: active ? UI.PRIMARY : "white",
+              color: active ? "white" : UI.PRIMARY,
+              fontWeight: 900,
+              cursor: "pointer",
+              transition: "all 120ms ease"
+            }}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Home({ user, firebaseUser }) {
 
-  // ===== DEBUG START =====
-  try {
-    console.log("Firebase projectId:", db?.app?.options?.projectId);
-    console.log("Auth UID:", firebaseUser?.uid);
-    console.log("Auth email:", firebaseUser?.email);
-  } catch {}
-  // ===== DEBUG END =====
-
 const [activeTab, setActiveTab] = useState("dashboard");
+const [dripView, setDripView] = useState("personal");
+const [flowView, setFlowView] = useState("community");
 
   // ✅ Admin = user has a Firestore doc at admins/{uid}
   const [isAdmin, setIsAdmin] = useState(false);
@@ -500,10 +534,16 @@ return (
                   setTransactions(rows);
                 }}
               />
+
+              <UploadHistory user={firebaseUser || user} />
             </Section>
 
             <Section label="Snapshot" storageKey="home:dashboard:snapshot">
-              <DashboardSnapshot transactions={transactions} />
+              <DashboardSnapshot 
+              transactions={transactions}
+              hasFlowAccess={hasFlowAccess}
+              communityTopSectors={sectorLeaders} 
+              />
             </Section>
           </>
         )}
@@ -511,7 +551,17 @@ return (
       {/* DRIP */}
       {activeTab === "drip" && (
         <>
+  <SubTabs
+    value={dripView}
+    onChange={setDripView}
+    tabs={[
+      { value: "personal", label: "Personal" },
+      { value: "market", label: "Market" },
+      { value: "compare", label: "Compare" }
+    ]}
+  />
 
+{dripView === "personal" && (
           <Section label="Monthly Drip" storageKey="home:drip">
             <MonthlyDrip
               transactions={transactions}
@@ -521,7 +571,9 @@ return (
               timeMode={timeMode}
             />
           </Section>
+)}
 
+{dripView === "market" && (
           <Section label={`Market Pulse (${timeframeDays}D)`} storageKey="home:pulse">
             <MarketPulse
               topSpendSectors={topSpendSectors}
@@ -537,45 +589,60 @@ return (
               setTimeMode={setTimeMode}
             />
           </Section>
+)}
 
-          <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
-            <AlignmentSnapshotDrip
-              transactions={transactions}
-              sectorLeaders={sectorLeaders}
-              personalRunners={personalRunners}
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-            />
+          {dripView === "compare" && (
+  <Section label="Alignment Snapshot (Drip)" storageKey="home:alignDrip">
+    <AlignmentSnapshotDrip
+      transactions={transactions}
+      sectorLeaders={sectorLeaders}
+      personalRunners={personalRunners}
+      timeframeDays={timeframeDays}
+      asOfDate={asOfDate}
+      timeMode={timeMode}
+    />
 
-            {!hasFlowAccess && simpleMode && (
-              <div style={{ marginTop: "1rem", textAlign: "center" }}>
-                <button
-                  type="button"
-                  onClick={() => setSimpleMode(false)}
-                  style={{
-                    padding: "10px 14px",
-                    fontWeight: 900,
-                    borderRadius: 10,
-                    border: `1px solid ${UI.BAND_BORDER}`,
-                    background: UI.BAND_BG,
-                    cursor: "pointer"
-                  }}
-                >
-                  Explore more insights →
-                </button>
-                <div style={{ fontSize: UI.FONT_MUTED, marginTop: 8, opacity: 0.9 }}>
-                  You’ll see Flow in preview (blurred) until you unlock it.
-                </div>
-              </div>
-            )}
-          </Section>
+    {!hasFlowAccess && simpleMode && (
+      <div style={{ marginTop: "1rem", textAlign: "center" }}>
+        <button
+          type="button"
+          onClick={() => setSimpleMode(false)}
+          style={{
+            padding: "10px 14px",
+            fontWeight: 900,
+            borderRadius: 10,
+            border: `1px solid ${UI.BAND_BORDER}`,
+            background: UI.BAND_BG,
+            cursor: "pointer"
+          }}
+        >
+          Explore more insights →
+        </button>
+
+        <div style={{ fontSize: UI.FONT_MUTED, marginTop: 8, opacity: 0.9 }}>
+          You’ll see Flow in preview (blurred) until you unlock it.
+        </div>
+      </div>
+    )}
+  </Section>
+)}
         </>
       )}
 
       {/* FLOW */}
       {(hasFlowAccess || !simpleMode) && activeTab === "flow" && (
         <FlowGate hasAccess={hasFlowAccess} onUpgradeClick={handleUpgradeClick}>
+  <SubTabs
+    value={flowView}
+    onChange={setFlowView}
+    tabs={[
+      { value: "community", label: "Community" },
+      { value: "market", label: "Market" },
+      { value: "compare", label: "Compare" }
+    ]}
+  />
+
+  {flowView === "community" && (
           <Section label="Monthly Flow" storageKey="home:flowMonthly">
             <MonthlyFlow
               flowAccess={hasFlowAccess}
@@ -594,7 +661,9 @@ return (
               marketPersonalRunners={personalRunners}
             />
           </Section>
+)}
 
+{flowView === "market" && (
           <Section label={`Flow Pulse (${timeframeDays}D)`} storageKey="home:flowPulse">
             <MonthlyFlow
               flowAccess={hasFlowAccess}
@@ -626,25 +695,28 @@ return (
               }
             />
           </Section>
+)}
 
-          <Section label="Alignment Snapshot (Flow)" storageKey="home:flowAlign">
-            <MonthlyFlow
-              flowAccess={hasFlowAccess}
-              flowConsent={!!user?.flowConsent}
-              userUid={user?.uid || ""}
-              userSpendTickers={userSpendTickers}
-              userRunners={personalRunners}
-              section="alignment"
-              timeframeDays={timeframeDays}
-              asOfDate={asOfDate}
-              timeMode={timeMode}
-              setTimeframeDays={setTimeframeDays}
-              setAsOfDate={setAsOfDate}
-              setTimeMode={setTimeMode}
-              marketSectorLeaders={sectorLeaders}
-              marketPersonalRunners={personalRunners}
-            />
-          </Section>
+          {flowView === "compare" && (
+  <Section label="Alignment Snapshot (Flow)" storageKey="home:flowAlign">
+    <MonthlyFlow
+      flowAccess={hasFlowAccess}
+      flowConsent={!!user?.flowConsent}
+      userUid={user?.uid || ""}
+      userSpendTickers={userSpendTickers}
+      userRunners={personalRunners}
+      section="alignment"
+      timeframeDays={timeframeDays}
+      asOfDate={asOfDate}
+      timeMode={timeMode}
+      setTimeframeDays={setTimeframeDays}
+      setAsOfDate={setAsOfDate}
+      setTimeMode={setTimeMode}
+      marketSectorLeaders={sectorLeaders}
+      marketPersonalRunners={personalRunners}
+    />
+  </Section>
+)}
         </FlowGate>
       )}
 

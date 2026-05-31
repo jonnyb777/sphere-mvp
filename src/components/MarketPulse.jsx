@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import TimeframeControls from "./TimeframeControls";
 import { Card } from "./ui/UiKit";
-import { UI } from "./SectionUI";
+import { UI, SubHeaderRow } from "./SectionUI";
 import { rollUpSector } from "../utils/sectorRollup";
 
 function pct(n) {
@@ -60,80 +60,78 @@ function pickTop10DiversifiedByUserSectors({
   getSector,
   getTicker,
   maxTotal = 10,
-  maxPerTopSector = 2
+  maxPerSector = 4
 }) {
-  const arr = Array.isArray(items) ? items : [];
+  const arr = (Array.isArray(items) ? items : [])
+    .filter((x) => Number(x.return30d) > 0)
+    .sort((a, b) => {
+      const perf = Number(b.return30d || 0) - Number(a.return30d || 0);
+      if (perf !== 0) return perf;
+
+      return String(getTicker(a) || "").localeCompare(String(getTicker(b) || ""), undefined, {
+        sensitivity: "base"
+      });
+    });
+
   const sectors = (Array.isArray(topSectors) ? topSectors : [])
     .map((s) => String(s || "").trim())
     .filter(Boolean);
+
+  const bySector = new Map();
+
+  for (const x of arr) {
+    const sector = String(getSector(x) || "Other / Unmapped");
+    if (!bySector.has(sector)) bySector.set(sector, []);
+    bySector.get(sector).push(x);
+  }
 
   const picked = [];
   const pickedTickers = new Set();
   const countBySector = new Map();
 
-  const bySector = new Map();
-  for (const x of arr) {
-    const t = String(getTicker(x) || "").toUpperCase().trim();
-    if (!t) continue;
-    const s = String(getSector(x) || "Other / Unmapped");
-    if (!bySector.has(s)) bySector.set(s, []);
-    bySector.get(s).push(x);
-  }
-
-  for (const [s, list] of bySector.entries()) {
-    list.sort((a, b) => {
-      const ra = Number(a.return30d ?? -999);
-      const rb = Number(b.return30d ?? -999);
-      return rb - ra;
-    });
-  }
-
-  const canAddStrict = (x) => {
-    const t = String(getTicker(x) || "").toUpperCase().trim();
-    if (!t || pickedTickers.has(t)) return false;
-
-    const s = String(getSector(x) || "Other / Unmapped");
-    if (sectors.includes(s)) {
-      const n = countBySector.get(s) || 0;
-      if (n >= maxPerTopSector) return false;
-    }
-    return true;
-  };
-
-  const canAddLoose = (x) => {
-    const t = String(getTicker(x) || "").toUpperCase().trim();
-    if (!t || pickedTickers.has(t)) return false;
-    return true;
-  };
-
   const add = (x) => {
-    const t = String(getTicker(x) || "").toUpperCase().trim();
-    const s = String(getSector(x) || "Other / Unmapped");
+    const ticker = String(getTicker(x) || "").toUpperCase().trim();
+    const sector = String(getSector(x) || "Other / Unmapped");
+
+    if (!ticker || pickedTickers.has(ticker)) return false;
+    if ((countBySector.get(sector) || 0) >= maxPerSector) return false;
+    if (picked.length >= maxTotal) return false;
+
     picked.push(x);
-    pickedTickers.add(t);
-    countBySector.set(s, (countBySector.get(s) || 0) + 1);
+    pickedTickers.add(ticker);
+    countBySector.set(sector, (countBySector.get(sector) || 0) + 1);
+    return true;
   };
 
-  for (const s of sectors) {
-    if (picked.length >= maxTotal) break;
-    const list = bySector.get(s) || [];
-    const first = list.find((x) => canAddStrict(x));
-    if (first) add(first);
+  // Pass 1: best one from each user top sector
+  for (const sector of sectors) {
+    const list = bySector.get(sector) || [];
+    if (list[0]) add(list[0]);
   }
 
-  for (const s of sectors) {
-    if (picked.length >= maxTotal) break;
-    const list = bySector.get(s) || [];
-    const next = list.find((x) => canAddStrict(x));
-    if (next) add(next);
+  // Pass 2: second-best from each user top sector
+  for (const sector of sectors) {
+    const list = bySector.get(sector) || [];
+    for (const x of list) {
+      if (add(x)) break;
+    }
   }
 
+  // Pass 3: fill remaining by best performance, respecting max 4 per sector
   for (const x of arr) {
-    if (picked.length >= maxTotal) break;
-    if (canAddLoose(x)) add(x);
+    add(x);
   }
 
-  return picked.slice(0, maxTotal);
+  return picked
+    .slice(0, maxTotal)
+    .sort((a, b) => {
+      const perf = Number(b.return30d || 0) - Number(a.return30d || 0);
+      if (perf !== 0) return perf;
+
+      return String(getTicker(a) || "").localeCompare(String(getTicker(b) || ""), undefined, {
+        sensitivity: "base"
+      });
+    });
 }
 
 function buildPulseNarrative({
@@ -324,6 +322,7 @@ export default function MarketPulse({
 
   // NEW: non-fatal missing ticker note
   const [missingNote, setMissingNote] = useState("");
+  const [openRunnerDetails, setOpenRunnerDetails] = useState(false);
 
   // ✅ Re-add: raw top spend sectors (you were referencing it but it didn't exist)
   const spendSectorsRaw = useMemo(
@@ -437,10 +436,12 @@ export default function MarketPulse({
             .filter((x) => Number.isFinite(x.return30d));
           uniItems.sort((a, b) => (b.return30d ?? -999) - (a.return30d ?? -999));
 
-          const labeledSorted = uniItems.map((x) => ({
-            ...x,
-            sectorName: tickerToRolledSector[String(x.ticker || "").toUpperCase()] || "Other / Unmapped"
-          }));
+          const labeledSorted = uniItems
+            .map((x) => ({
+              ...x,
+              sectorName: tickerToRolledSector[String(x.ticker || "").toUpperCase()] || "Other / Unmapped"
+            }))
+            .filter((x) => Number(x.return30d) > 0);
 
           const top10 = pickTop10DiversifiedByUserSectors({
             items: labeledSorted,
@@ -448,15 +449,16 @@ export default function MarketPulse({
             getSector: (x) => x.sectorName,
             getTicker: (x) => x.ticker,
             maxTotal: 10,
-            maxPerTopSector: 2
+            maxPerSector: 4
           });
 
           const alphaTop10 = top10.slice().sort((a, b) => {
-            const s = String(a.sectorName || "").localeCompare(String(b.sectorName || ""), undefined, {
+            const perf = Number(b.return30d || 0) - Number(a.return30d || 0);
+            if (perf !== 0) return perf;
+
+            return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, {
               sensitivity: "base"
             });
-            if (s !== 0) return s;
-            return String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
           });
 
           setTickerLeaders(alphaTop10);
@@ -562,8 +564,12 @@ export default function MarketPulse({
             border: `1px solid ${UI.SOFT_BORDER}`
           }}
         >
-          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>Market Pulse Narrative</div>
-          <div style={{ marginTop: "0.35rem" }}>{pulseNarrative}</div>
+          <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>
+            Market Pulse
+          </div>
+          <div style={{ marginTop: "0.35rem" }}>
+            Your spending mapped into market sectors and positive runners for this window.
+          </div>
         </div>
       </div>
 
@@ -615,23 +621,49 @@ export default function MarketPulse({
       )}
 
       <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, marginTop: "1rem", color: UI.PRIMARY }}>
-        Top 10 Runners ({timeframeDays}D){" "}
+        Top Positive Runners ({timeframeDays}D){" "}
         <span style={{ fontSize: UI.FONT_MUTED, fontWeight: 700, opacity: 0.9 }}>
           — Your activity-led (based on your top spend categories)
         </span>
       </div>
 
-      <p style={{ fontSize: UI.FONT_BODY, marginBottom: "0.25rem" }}>
-        Top Spend Categories (Spend): <b>{formatSpendSectorsWithRollup(spendSectorsRaw) || "—"}</b>
-      </p>
+      <SubHeaderRow
+  title="How runners are selected"
+  open={openRunnerDetails}
+  onToggle={() => setOpenRunnerDetails((v) => !v)}
+/>
 
-      <p style={{ fontSize: UI.FONT_BODY, marginTop: 0 }}>
-        Market Roll-up Buckets: <b>{(spendSectorsRolled || []).join(", ") || "—"}</b>
-      </p>
+{openRunnerDetails ? (
+  <div
+    style={{
+      marginTop: "0.5rem",
+      marginBottom: "0.75rem",
+      padding: "0.75rem",
+      background: UI.BAND_BG,
+      borderRadius: UI.RADIUS_SOFT,
+      border: `1px solid ${UI.SOFT_BORDER}`,
+      fontSize: UI.FONT_BODY
+    }}
+  >
+    <div>
+      <b>Top Spend Categories:</b>{" "}
+      {formatSpendSectorsWithRollup(spendSectorsRaw) || "—"}
+    </div>
+
+    <div style={{ marginTop: "0.35rem" }}>
+      <b>Market Roll-up Buckets:</b>{" "}
+      {(spendSectorsRolled || []).join(", ") || "—"}
+    </div>
+
+    <div style={{ marginTop: "0.5rem", fontSize: UI.FONT_MUTED, opacity: 0.9 }}>
+      Sphere maps your spend categories into market buckets, then selects positive runners from those buckets.
+    </div>
+  </div>
+) : null}
 
       {tickerLeaders.length === 0 ? (
         <p style={{ fontSize: UI.FONT_BODY }}>
-          No runners shown yet (upload transactions + ensure sector mapping produced at least one recognized sector, and market cache is warmed).
+          No positive runners found for this window yet.
         </p>
       ) : (
         <ol style={{ fontSize: UI.FONT_BODY }}>

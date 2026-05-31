@@ -25,6 +25,7 @@
         "npm:react-dom@^19.2.0",
         "npm:react@^19.2.0",
         "npm:stripe@^20.1.2",
+        "npm:vite-plugin-pwa@^1.2.0",
         "npm:vite@^7.2.4",
         "npm:xlsx@~0.18.5"
       ]
