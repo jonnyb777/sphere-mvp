@@ -52,10 +52,10 @@ export function buildPrimaryInsightCard({
   if (/technology|subscription|e-commerce|retail/.test(top)) {
     return {
       title: "Your activity leans digitally centered",
-      narrative:
-        "This snapshot suggests a pattern shaped by connected services, convenience, and technology-enabled daily activity.",
-      comparison:
-        "This does not mean those companies are automatic investments. It gives you a familiar starting point for understanding related market themes.",
+narrative:
+  "Your spending behavior appears closely tied to connected services, convenience, and technology-enabled daily life.",
+comparison:
+  "Sphere reads this as your relationship to a broader digital-consumer movement — not as a buy signal, but as a starting point for market understanding.",
       explore,
       tone: "calm"
     };
@@ -64,10 +64,10 @@ export function buildPrimaryInsightCard({
   if (/grocery|pharmacies|utilities|insurance/.test(top)) {
     return {
       title: "Your activity leans stability-oriented",
-      narrative:
-        "This snapshot suggests a pattern anchored in essentials, coverage, and recurring household needs rather than discretionary exploration.",
-      comparison:
-        "Sphere reads this as a steadier, needs-based spending posture that can connect to defensive market themes.",
+narrative:
+  "Your spending behavior appears more connected to essentials, coverage, and recurring household needs than discretionary exploration.",
+comparison:
+  "Sphere reads this as a steadier relationship to the market — one that may align more with defensive and needs-based themes.",
       explore,
       tone: "positive"
     };
@@ -76,10 +76,10 @@ export function buildPrimaryInsightCard({
   if (/restaurants|travel|transportation/.test(top)) {
     return {
       title: "Your activity leans experience-oriented",
-      narrative:
-        "This snapshot suggests a pattern shaped by movement, meals, and real-world activity rather than purely digital or household spending.",
-      comparison:
-        "This can help you explore consumer demand, mobility, and discretionary market themes without treating spending as a buy signal.",
+narrative:
+  "Your spending behavior appears more connected to movement, meals, and real-world activity than purely digital or household patterns.",
+comparison:
+  "Sphere reads this as your relationship to broader consumer demand and mobility themes — useful for orientation, not automatic investment decisions.",
       explore,
       tone: "calm"
     };
@@ -88,10 +88,10 @@ export function buildPrimaryInsightCard({
   if (categoryRows.length >= 5) {
     return {
       title: "Your snapshot shows a broad lifestyle mix",
-      narrative:
-        "This upload reflects spending across several areas, giving Sphere a wider behavioral picture to compare against market and Flow signals.",
-      comparison:
-        "A broader mix can make alignment and comparison insights more useful over time.",
+narrative:
+  "Your spending behavior spans several areas, giving Sphere a wider view of how you participate in the consumer economy.",
+comparison:
+  "That broader footprint can make Alignment more useful because Sphere can compare where your behavior fits, diverges, or overlaps with wider patterns.",
       explore,
       tone: "positive"
     };
@@ -105,4 +105,71 @@ export function buildPrimaryInsightCard({
     explore,
     tone: "calm"
   };
+}
+export function buildDashboardFlags({
+  categoryRows,
+  merchantRows,
+  totalSpend,
+  transactionCount
+}) {
+  const flags = [];
+  const topCategory = categoryRows[0];
+  const topMerchant = merchantRows[0];
+
+  if (!transactionCount) {
+    return [
+      {
+        title: "No upload yet",
+        body: "Upload transactions to generate your spending snapshot."
+      }
+    ];
+  }
+
+  if (topCategory?.pct >= 40) {
+    flags.push({
+      title: "Spending is concentrated",
+      body: `${topCategory.category} makes up ${topCategory.pctRounded.toFixed(
+        1
+      )}% of mapped spending. That may be worth reviewing before comparing your activity to market sectors.`
+    });
+  }
+
+  if (topMerchant && totalSpend > 0) {
+    const merchantPct = (topMerchant.amount / totalSpend) * 100;
+    if (merchantPct >= 25) {
+      flags.push({
+        title: "One merchant stands out",
+        body: `${topMerchant.merchant} represents ${merchantPct.toFixed(
+          1
+        )}% of total spending in this upload.`
+      });
+    }
+  }
+
+  const subscriptionLike = merchantRows.filter((m) =>
+    /netflix|spotify|google|microsoft|apple|hulu|prime|subscription/i.test(m.merchant)
+  );
+
+  if (subscriptionLike.length >= 2) {
+    flags.push({
+      title: "Recurring-style activity detected",
+      body: `We found ${subscriptionLike.length} subscription-style merchants. These can be useful to track separately over time.`
+    });
+  }
+
+  if (categoryRows.length >= 5) {
+    flags.push({
+      title: "Spending is spread across categories",
+      body: `Your upload includes ${categoryRows.length} populated spend categories, which gives Sphere more context for Drip, Flow, and Alignment.`
+    });
+  }
+
+  if (!flags.length) {
+    flags.push({
+      title: "No major flags yet",
+      body: "Your uploaded spending does not show a strong concentration or obvious recurring pattern based on current thresholds."
+    });
+  }
+
+  return flags;
 }

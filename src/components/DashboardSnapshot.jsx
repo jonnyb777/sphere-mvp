@@ -4,7 +4,11 @@ import { UI, SummaryBand } from "./SectionUI";
 import { Card } from "./ui/UiKit";
 import { classifyMerchant } from "../utils/merchantSectorMap";
 import InsightCard from "./InsightCard";
-import { buildPrimaryInsightCard } from "../utils/insightEngine";
+import {
+  buildPrimaryInsightCard,
+  buildDashboardFlags,
+  getExploreThemes
+} from "../utils/insightEngine";
 
 function money(n) {
   const v = Number(n);
@@ -113,69 +117,6 @@ function merchantTotalsFromTransactions(transactions) {
   return Array.from(map.entries())
     .map(([merchant, amount]) => ({ merchant, amount }))
     .sort((a, b) => b.amount - a.amount);
-}
-
-function buildDashboardFlags({ categoryRows, merchantRows, totalSpend, transactionCount }) {
-  const flags = [];
-  const topCategory = categoryRows[0];
-  const topMerchant = merchantRows[0];
-
-  if (!transactionCount) {
-    return [
-      {
-        title: "No upload yet",
-        body: "Upload transactions to generate your spending snapshot."
-      }
-    ];
-  }
-
-  if (topCategory?.pct >= 40) {
-    flags.push({
-      title: "Spending is concentrated",
-      body: `${topCategory.category} makes up ${topCategory.pctRounded.toFixed(
-        1
-      )}% of mapped spending. That may be worth reviewing before comparing your activity to market sectors.`
-    });
-  }
-
-  if (topMerchant && totalSpend > 0) {
-    const merchantPct = (topMerchant.amount / totalSpend) * 100;
-    if (merchantPct >= 25) {
-      flags.push({
-        title: "One merchant stands out",
-        body: `${topMerchant.merchant} represents ${merchantPct.toFixed(
-          1
-        )}% of total spending in this upload.`
-      });
-    }
-  }
-
-  const subscriptionLike = merchantRows.filter((m) =>
-    /netflix|spotify|google|microsoft|apple|hulu|prime|subscription/i.test(m.merchant)
-  );
-
-  if (subscriptionLike.length >= 2) {
-    flags.push({
-      title: "Recurring-style activity detected",
-      body: `We found ${subscriptionLike.length} subscription-style merchants. These can be useful to track separately over time.`
-    });
-  }
-
-  if (categoryRows.length >= 5) {
-    flags.push({
-      title: "Spending is spread across categories",
-      body: `Your upload includes ${categoryRows.length} populated spend categories, which gives Sphere more context for Drip, Flow, and Alignment.`
-    });
-  }
-
-  if (!flags.length) {
-    flags.push({
-      title: "No major flags yet",
-      body: "Your uploaded spending does not show a strong concentration or obvious recurring pattern based on current thresholds."
-    });
-  }
-
-  return flags;
 }
 
 function buildDashboardInsight({ categoryRows, merchantRows, totalSpend, transactionCount }) {
