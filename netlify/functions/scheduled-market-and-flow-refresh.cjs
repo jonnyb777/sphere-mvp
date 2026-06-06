@@ -98,7 +98,7 @@ exports.handler = async () => {
       return json(500, { error: "Missing MARKET_WARM_SECRET" });
     }
 
-    const companyMarketRefreshDays = [30];
+    const companyMarketRefreshDays = [30, 60, 90];
 const sectorEtfMarketRefreshDays = [30, 60, 90];
 const flowRebuildDays = [30, 60, 90];
 

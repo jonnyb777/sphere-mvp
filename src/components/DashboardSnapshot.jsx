@@ -200,17 +200,58 @@ function PieChart({ rows }) {
 
 export default function DashboardSnapshot({
   transactions,
+  latestSnapshot = null,
   hasFlowAccess = false,
   communityTopSectors = []
 }) {
   const arr = useMemo(() => (Array.isArray(transactions) ? transactions : []), [transactions]);
 
-  const categoryRows = useMemo(() => categoryTotalsFromTransactions(arr), [arr]);
-  const merchantRows = useMemo(() => merchantTotalsFromTransactions(arr), [arr]);
+  const categoryRows = useMemo(() => {
+  if (arr.length) return categoryTotalsFromTransactions(arr);
+
+  const snapshotSectors = Array.isArray(latestSnapshot?.topSectors)
+    ? latestSnapshot.topSectors
+    : [];
+
+  const total = snapshotSectors.reduce((sum, s) => sum + Number(s.amount || 0), 0);
+
+  if (!total) return [];
+
+  let running = 0;
+
+  return snapshotSectors.map((s, idx) => {
+    const pct = total ? (Number(s.amount || 0) / total) * 100 : 0;
+
+    const pctRounded =
+      idx === snapshotSectors.length - 1
+        ? Math.max(0, 100 - running)
+        : Number(pct.toFixed(1));
+
+    running += pctRounded;
+
+    return {
+      category: s.sector,
+      amount: Number(s.amount || 0),
+      pct,
+      pctRounded
+    };
+  });
+}, [arr, latestSnapshot]);
+  const merchantRows = useMemo(() => {
+  if (arr.length) return merchantTotalsFromTransactions(arr);
+
+  return Array.isArray(latestSnapshot?.topMerchants)
+    ? latestSnapshot.topMerchants
+    : [];
+}, [arr, latestSnapshot]);
   const topMerchant = merchantRows[0];
 
   const totalSpend = useMemo(() => {
-    return arr.reduce((sum, tx) => {
+  if (!arr.length && latestSnapshot?.totalSpend) {
+    return Number(latestSnapshot.totalSpend || 0);
+  }
+
+  return arr.reduce((sum, tx) => {
       const spend = getSpend(tx);
       return spend !== null && spend > 0 ? sum + spend : sum;
     }, 0);

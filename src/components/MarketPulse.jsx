@@ -471,7 +471,7 @@ export default function MarketPulse({
           const missingCombined = uniq([...(etfMissing || []), ...(uniMissing || [])]).filter(Boolean);
           if (missingCombined.length) {
             setMissingNote(
-              `Some tickers are missing cached market data (${missingCombined.length}). Showing partial results.`
+              `Some company tickers are not cached for this window (${missingCombined.length}). Sector leaders may still show; runners may be partial.`
             );
           }
         } else {

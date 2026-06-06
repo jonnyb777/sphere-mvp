@@ -75,6 +75,10 @@ service cloud.firestore {
 
       // Only admin may delete user docs
       allow delete: if isAdmin();
+      match /insight_snapshots/{snapshotId} {
+  allow read: if isOwner(uid) || isAdmin();
+  allow write: if isAdmin();
+}
     }
 
     // =============================

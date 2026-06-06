@@ -5,7 +5,9 @@ import { classifyMerchant, normalizeMerchantName } from "../utils/merchantSector
 
 function parseDateAny(tx) {
   const raw =
-    tx.date ??
+    tx.postedDate ??
+tx.PostedDate ??
+tx.date ??
     tx.Date ??
     tx.posted_at ??
     tx.PostedAt ??

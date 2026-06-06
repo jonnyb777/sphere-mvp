@@ -12,14 +12,16 @@ function money(n) {
 
 function tierTone(tier) {
   if (tier === "Tier 1") return "positive";
-  if (tier === "Tier 2") return "market";
-  if (tier === "Tier 3") return "neutral";
+  if (tier === "Tier 2") return "info";
+  if (tier === "Tier 3") return "market";
   return "neutral";
 }
 
 function parseDateAny(tx) {
   const raw =
-    tx.date ??
+    tx.postedDate ??
+tx.PostedDate ??
+tx.date ??
     tx.Date ??
     tx.posted_at ??
     tx.PostedAt ??
@@ -324,8 +326,6 @@ const topTickers = useMemo(() => {
                 <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
                   <b>{r.rolledSector}</b>
                 </td>
-
-                <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>{r.etfSector}</td>
 
                 <td style={{ borderBottom: "1px solid #eee", padding: "8px" }}>
                   <SignalChip

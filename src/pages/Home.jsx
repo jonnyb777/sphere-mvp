@@ -20,7 +20,14 @@ import { PageShell, Tabs, Card } from "../components/ui/UiKit";
 import { SectionBand, usePersistedBool, UI, Badge } from "../components/SectionUI";
 import sphereLogo from "../assets/sphere-logo.png";
 
-import { doc, getDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where
+} from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { signOut } from "firebase/auth";
 import InstallAppButton from "../components/InstallAppButton";
@@ -365,6 +372,40 @@ const [flowView, setFlowView] = useState("community");
   const [personalRunners, setPersonalRunners] = useState([]);
   const [sectorLeaders, setSectorLeaders] = useState([]);
 
+  const [latestSnapshot, setLatestSnapshot] = useState(null);
+
+  useEffect(() => {
+  async function loadSnapshotTransactions() {
+    const uid = String((firebaseUser || user)?.uid || "").trim();
+    const batchId = String(latestSnapshot?.batchId || "").trim();
+
+    if (!uid || !batchId) return;
+
+    // If the user just uploaded in this session, don't overwrite in-memory rows.
+    if (Array.isArray(transactions) && transactions.length > 0) return;
+
+    try {
+      const q = query(
+        collection(db, "uploads", uid, "tx"),
+        where("batchIds", "array-contains", batchId)
+      );
+
+      const snap = await getDocs(q);
+
+      setTransactions(
+        snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data()
+        }))
+      );
+    } catch (e) {
+      console.error("loadSnapshotTransactions error:", e);
+    }
+  }
+
+  loadSnapshotTransactions();
+}, [latestSnapshot?.batchId, firebaseUser?.uid, user?.uid]);
+
   // ✅ Flow context for SphereBot → Spherical
   const [flowTopSectors, setFlowTopSectors] = useState([]);
   const [flowRunners, setFlowRunners] = useState([]); // array of tickers (strings)
@@ -535,15 +576,19 @@ return (
                 }}
               />
 
-              <UploadHistory user={firebaseUser || user} />
+              <UploadHistory
+  user={firebaseUser || user}
+  onLatestSnapshotChange={setLatestSnapshot}
+/>
             </Section>
 
             <Section label="Snapshot" storageKey="home:dashboard:snapshot">
-              <DashboardSnapshot 
-              transactions={transactions}
-              hasFlowAccess={hasFlowAccess}
-              communityTopSectors={sectorLeaders} 
-              />
+              <DashboardSnapshot
+  transactions={transactions}
+  latestSnapshot={latestSnapshot}
+  hasFlowAccess={hasFlowAccess}
+  communityTopSectors={sectorLeaders}
+/>
             </Section>
           </>
         )}

@@ -3,7 +3,6 @@ import {
   collection,
   doc,
   onSnapshot,
-  getDocs,
   orderBy,
   query,
   updateDoc
@@ -31,31 +30,13 @@ function fmtDate(v) {
   }
 }
 
-export default function UploadHistory({ user }) {
+export default function UploadHistory({ user, onLatestSnapshotChange }) {
   const [snapshots, setSnapshots] = useState([]);
   const [expanded, setExpanded] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [status, setStatus] = useState("");
 
-  async function loadSnapshots() {
-    if (!user?.uid) return;
-
-    const q = query(
-      collection(db, "users", user.uid, "insight_snapshots"),
-      orderBy("createdAt", "desc")
-    );
-
-    const snap = await getDocs(q);
-
-    setSnapshots(
-      snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data()
-      }))
-    );
-  }
-
-  useEffect(() => {
+    useEffect(() => {
   if (!user?.uid) return;
 
   const q = query(
@@ -63,14 +44,23 @@ export default function UploadHistory({ user }) {
     orderBy("createdAt", "desc")
   );
 
-  const unsub = onSnapshot(q, (snap) => {
+  const unsub = onSnapshot(
+  q,
+  (snap) => {
+    setStatus(`Loaded ${snap.size} snapshot(s).`);
+
     setSnapshots(
       snap.docs.map((d) => ({
         id: d.id,
         ...d.data()
       }))
     );
-  });
+  },
+  (err) => {
+    console.error("Snapshot listener error:", err);
+    setStatus(`Snapshot load error: ${err.message}`);
+  }
+);
 
   return () => unsub();
 }, [user?.uid]);
@@ -115,6 +105,12 @@ setStatus("Snapshot excluded from future insights.");
   );
 
   const latest = activeSnapshots[0] || null;
+
+  useEffect(() => {
+  if (typeof onLatestSnapshotChange === "function") {
+    onLatestSnapshotChange(latest);
+  }
+}, [latest, onLatestSnapshotChange]);
 
   return (
     <div
