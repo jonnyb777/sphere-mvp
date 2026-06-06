@@ -426,7 +426,7 @@ await ensureUserProfile(result.user);
               lineHeight: 1.25
             }}
           >
-            Turn your daily spending into smart investing
+            Understand markets through the behavior you already know.
           </div>
 
           <div style={{ marginTop: 6, ...smallNote }}>
@@ -482,97 +482,101 @@ await ensureUserProfile(result.user);
         </div>
 
         {/* PASSWORD MODE */}
-        {mode === "password" ? (
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                type="button"
-                style={tabBtn(pwAction === "login")}
-                onClick={() => {
-                  setPwAction("login");
-                  setStatus({ type: "", msg: "" });
-                }}
-              >
-                Log In
-              </button>
-              <button
-                type="button"
-                style={tabBtn(pwAction === "signup")}
-                onClick={() => {
-                  setPwAction("signup");
-                  setStatus({ type: "", msg: "" });
-                }}
-              >
-                Create Account
-              </button>
-            </div>
-
-{pwAction === "signup" ? (
-  <>
+{mode === "password" ? (
+  <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
     <label style={{ fontWeight: 800, color: "var(--s-primary, #123764)", fontSize: 13 }}>
-      Username
+      Password
     </label>
+
     <input
-      value={username}
-      onChange={(e) => setUsername(e.target.value)}
-      placeholder="@yourname"
-      autoComplete="username"
+      value={password}
+      onChange={(e) => setPassword(e.target.value)}
+      placeholder={pwAction === "signup" ? "Create a password" : "Enter your password"}
+      type="password"
+      autoComplete={pwAction === "signup" ? "new-password" : "current-password"}
       style={inputStyle}
     />
-  </>
+
+    {pwAction === "signup" ? (
+      <>
+        <label style={{ fontWeight: 800, color: "var(--s-primary, #123764)", fontSize: 13 }}>
+          Username
+        </label>
+
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="@yourname"
+          autoComplete="username"
+          style={inputStyle}
+        />
+      </>
+    ) : null}
+
+    {pwAction === "login" ? (
+      <button
+        type="button"
+        onClick={resetPassword}
+        disabled={busy}
+        style={{
+          border: "none",
+          background: "transparent",
+          color: "var(--s-secondary, #3f6fa5)",
+          fontWeight: 800,
+          cursor: "pointer",
+          padding: 0,
+          textAlign: "left"
+        }}
+      >
+        Forgot password?
+      </button>
+    ) : null}
+
+    <button
+      type="button"
+      disabled={!canEmail || !canPassword || busy}
+      onClick={pwAction === "signup" ? pwSignup : pwLogin}
+      style={primaryBtnStyle(canEmail && canPassword && !busy)}
+    >
+      {busy ? "Working…" : pwAction === "signup" ? "Create Account →" : "Log In →"}
+    </button>
+
+    <div style={{ display: "flex", gap: 10 }}>
+      <button
+        type="button"
+        style={tabBtn(pwAction === "login")}
+        onClick={() => {
+          setPwAction("login");
+          setStatus({ type: "", msg: "" });
+        }}
+      >
+        Log In
+      </button>
+
+      <button
+        type="button"
+        style={tabBtn(pwAction === "signup")}
+        onClick={() => {
+          setPwAction("signup");
+          setStatus({ type: "", msg: "" });
+        }}
+      >
+        Create Account
+      </button>
+    </div>
+
+    <div style={smallNote}>
+      Password must be <b>6+ characters</b>. Informational only — Sphere gives context, not investment advice.
+    </div>
+
+    <div style={{ marginTop: 6 }}>
+      <div style={{ ...smallNote, marginBottom: 8 }}>Or use an alternate sign-in:</div>
+      <button type="button" onClick={googleLogin} disabled={busy} style={secondaryBtnStyle}>
+        Continue with Google
+      </button>
+    </div>
+  </div>
 ) : null}
-
-            <label style={{ fontWeight: 800, color: "var(--s-primary, #123764)", fontSize: 13 }}>Password</label>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              type="password"
-              autoComplete={pwAction === "signup" ? "new-password" : "current-password"}
-              style={inputStyle}
-            />
-
-            {pwAction === "login" ? (
-  <button
-    type="button"
-    onClick={resetPassword}
-    disabled={busy}
-    style={{
-      border: "none",
-      background: "transparent",
-      color: "var(--s-secondary, #3f6fa5)",
-      fontWeight: 800,
-      cursor: "pointer",
-      padding: 0,
-      textAlign: "left"
-    }}
-  >
-    Forgot password?
-  </button>
-) : null}
-
-            <button
-              type="button"
-              disabled={!canEmail || !canPassword || busy}
-              onClick={pwAction === "signup" ? pwSignup : pwLogin}
-              style={primaryBtnStyle(canEmail && canPassword && !busy)}
-            >
-              {busy ? "Working…" : "Continue →"}
-            </button>
-
-            <div style={smallNote}>
-              Password must be <b>6+ characters</b>. (Enable Email/Password in Firebase Auth.)
-            </div>
-
-            {/* Google alternate */}
-            <div style={{ marginTop: 6 }}>
-              <div style={{ ...smallNote, marginBottom: 8 }}>Or use an alternate sign-in (optional):</div>
-              <button type="button" onClick={googleLogin} disabled={busy} style={secondaryBtnStyle}>
-                Continue with Google
-              </button>
-            </div>
-          </div>
-        ) : null}
 
         {/* EMAIL LINK MODE */}
         {mode === "link" ? (
