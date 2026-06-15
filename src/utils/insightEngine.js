@@ -24,6 +24,117 @@ export function getExploreThemes(category = "") {
   return ["SPY", "broad market", "consumer behavior", "sector rotation"];
 }
 
+export function buildDripIdentity({ categoryRows = [] }) {
+  const topCategory = categoryRows[0];
+  const categoryCount = categoryRows.length;
+  const topPct = Number(topCategory?.pct || 0);
+  const topName = String(topCategory?.category || "").toLowerCase();
+
+  if (!topCategory) {
+    return {
+      label: "Pattern forming",
+      traditional: "Not enough data yet",
+      meaning: "Upload activity to generate your first identity read.",
+      emoji: "🫧"
+    };
+  }
+
+  if (/technology|subscription|e-commerce|retail/.test(topName)) {
+    return {
+      label: "Surge",
+      traditional: "Growth-oriented",
+      meaning: "Innovation and changing habits",
+      emoji: "🌊"
+    };
+  }
+
+  if (/grocery|pharmacies|utilities|insurance/.test(topName)) {
+    return {
+      label: "Anchor",
+      traditional: "Defensive",
+      meaning: "Stability and essentials",
+      emoji: "⚓"
+    };
+  }
+
+  if (categoryCount >= 5 && topPct < 35) {
+    return {
+      label: "Surface",
+      traditional: "Balanced",
+      meaning: "Broad participation",
+      emoji: "🫧"
+    };
+  }
+
+  if (topPct >= 40) {
+    return {
+      label: "Stream",
+      traditional: "Concentrated",
+      meaning: "Focused priorities",
+      emoji: "💧"
+    };
+  }
+
+  return {
+    label: "Surface",
+    traditional: "Balanced",
+    meaning: "Broad participation",
+    emoji: "🫧"
+  };
+}
+
+export function buildFlowIdentity({ communityTopSectors = [] }) {
+  const sectors = Array.isArray(communityTopSectors)
+    ? communityTopSectors.map((s) => String(s || "").toLowerCase())
+    : [];
+
+  const top = sectors[0] || "";
+  const count = sectors.length;
+
+  if (!top) {
+    return {
+      label: "Flow forming",
+      traditional: "Not enough community context",
+      meaning: "Flow identity appears once enough community activity is available.",
+      emoji: "🌊"
+    };
+  }
+
+  if (/technology|subscription|e-commerce|retail/.test(top)) {
+    return {
+      label: "Wave Maker",
+      traditional: "Early adopter",
+      meaning: "Ahead of the crowd",
+      emoji: "🏄"
+    };
+  }
+
+  if (/grocery|pharmacies|utilities|insurance|staples|healthcare/.test(top)) {
+    return {
+      label: "Calm Waters",
+      traditional: "Defensive relative to the crowd",
+      meaning: "Stable while others shift",
+      emoji: "⚓"
+    };
+  }
+
+  if (count >= 5) {
+    return {
+      label: "In the Flow",
+      traditional: "Mainstream",
+      meaning: "With the crowd",
+      emoji: "🫧"
+    };
+  }
+
+  return {
+    label: "Crosscurrent",
+    traditional: "Divergent",
+    meaning: "Different from the crowd",
+    emoji: "↔️"
+  };
+}
+
 export function buildPrimaryInsightCard({
   categoryRows,
   merchantRows,

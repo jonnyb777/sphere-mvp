@@ -4,10 +4,17 @@ import { UI, SummaryBand } from "./SectionUI";
 import { Card } from "./ui/UiKit";
 import { classifyMerchant } from "../utils/merchantSectorMap";
 import InsightCard from "./InsightCard";
+import AlignmentReportCard from "./AlignmentReportCard";
+import FlowMarketAlignmentCard from "./FlowMarketAlignmentCard";
+import FlowAlignmentScoreCard from "./FlowAlignmentScoreCard";
+import TrendTimingCard from "./TrendTimingCard";
+import FlowConfidenceCard from "./FlowConfidenceCard";
 import {
   buildPrimaryInsightCard,
   buildDashboardFlags,
-  getExploreThemes
+  buildDripIdentity,
+buildFlowIdentity,
+getExploreThemes
 } from "../utils/insightEngine";
 
 function money(n) {
@@ -61,6 +68,58 @@ function cleanSpendCategory(category) {
   if (!c || c === "Other / Unmapped") return null;
   if (c === "Consumer & Retail") return "E-Commerce / Retail";
   return c;
+}
+
+function normalizeThemeName(x = "") {
+  const s = String(x || "").toLowerCase().trim();
+
+  if (/digital|technology|subscription|telecom|software|cloud|semiconductor/.test(s)) return "digital";
+  if (/restaurant|dining|food away/.test(s)) return "restaurants";
+  if (/travel|transportation|mobility|airline|hotel/.test(s)) return "travel";
+  if (/health|fitness|pharm|medical/.test(s)) return "health";
+  if (/retail|apparel|consumer|e-commerce|big box/.test(s)) return "retail";
+  if (/grocery|staples|utilities|insurance|defensive|essentials/.test(s)) return "essentials";
+  if (/financial|bank|credit|payment/.test(s)) return "financial";
+
+  return s;
+}
+
+function getSnapshotDateValue(snapshot) {
+  const raw =
+    snapshot?.behavioralAsOf ||
+    snapshot?.lastUploadedAt ||
+    snapshot?.updatedAt ||
+    snapshot?.createdAt;
+
+  if (!raw) return 0;
+
+  const d = raw?.toDate
+    ? raw.toDate()
+    : new Date(raw);
+
+  const t = d.getTime();
+
+  return Number.isFinite(t) ? t : 0;
+}
+
+function getSnapshotTopTheme(snapshot) {
+  const move = Array.isArray(snapshot?.alignmentReport?.moves)
+    ? snapshot.alignmentReport.moves[0]
+    : null;
+
+  if (move?.label || move?.sector) {
+    return normalizeThemeName(
+      move.label || move.sector
+    );
+  }
+
+  const topSector = Array.isArray(snapshot?.topSectors)
+    ? snapshot.topSectors[0]
+    : null;
+
+  return normalizeThemeName(
+    topSector?.sector || ""
+  );
 }
 
 function categoryTotalsFromTransactions(transactions) {
@@ -201,6 +260,7 @@ function PieChart({ rows }) {
 export default function DashboardSnapshot({
   transactions,
   latestSnapshot = null,
+  snapshotHistory = [],
   hasFlowAccess = false,
   communityTopSectors = []
 }) {
@@ -270,6 +330,67 @@ export default function DashboardSnapshot({
     [categoryRows, merchantRows, totalSpend, arr.length]
   );
 
+  const dripIdentity = useMemo(
+  () => buildDripIdentity({ categoryRows }),
+  [categoryRows]
+);
+
+const flowIdentity = useMemo(
+  () =>
+    buildFlowIdentity({
+      communityTopSectors:
+        hasFlowAccess && communityTopSectors.length
+          ? communityTopSectors
+          : hasFlowAccess
+          ? ["Technology", "Consumer Discretionary", "Consumer Staples"]
+          : []
+    }),
+  [communityTopSectors, hasFlowAccess]
+);
+
+const previousIdentity = useMemo(() => {
+  if (latestSnapshot?.priorDripIdentity?.label) {
+    return latestSnapshot.priorDripIdentity;
+  }
+
+  const prior = Array.isArray(latestSnapshot?.priorTopSectors)
+    ? latestSnapshot.priorTopSectors
+    : [];
+
+  if (!prior.length) return null;
+
+  return buildDripIdentity({
+    categoryRows: prior.map((s) => ({
+      category: s.sector,
+      amount: Number(s.amount || 0),
+      pct: Number(s.pct || 0),
+      pctRounded: Number(s.pctRounded || s.pct || 0)
+    }))
+  });
+}, [latestSnapshot]);
+
+const dripEvolution = useMemo(() => {
+  if (latestSnapshot?.evolution?.text) {
+    return latestSnapshot.evolution;
+  }
+
+  if (!previousIdentity) {
+    return {
+      text: `Current identity: ${dripIdentity.emoji} ${dripIdentity.label}. Evolution will appear after your next upload.`
+    };
+  }
+
+  if (previousIdentity.label === dripIdentity.label) {
+    return {
+      text: `Still ${dripIdentity.emoji} ${dripIdentity.label}: your pattern remained consistent with your previous upload.`
+    };
+  }
+
+  return {
+    text: `Previously ${previousIdentity.emoji} ${previousIdentity.label} → now ${dripIdentity.emoji} ${dripIdentity.label}.`
+  };
+}, [latestSnapshot, previousIdentity, dripIdentity]);
+
   const primaryInsightCard = useMemo(
   () =>
     buildPrimaryInsightCard({
@@ -310,24 +431,7 @@ const flowExploreCard = useMemo(() => {
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
-<InsightCard
-  title={primaryInsightCard.title}
-  narrative={primaryInsightCard.narrative}
-  comparison={primaryInsightCard.comparison}
-  explore={primaryInsightCard.explore}
-  tone={primaryInsightCard.tone}
-/>
-{flowExploreCard ? (
-  <InsightCard
-    eyebrow="Flow Explore"
-    title={flowExploreCard.title}
-    narrative={flowExploreCard.narrative}
-    comparison={flowExploreCard.comparison}
-    explore={flowExploreCard.explore}
-    tone={flowExploreCard.tone}
-  />
-) : null}
-<SummaryBand>
+      <SummaryBand>
         <div style={{ fontSize: UI.FONT_BODY }}>
           <b>Dashboard snapshot:</b>{" "}
           {arr.length ? (
@@ -399,6 +503,222 @@ const flowExploreCard = useMemo(() => {
       >
         <PieChart rows={categoryRows} />
       </Card>
+<Card>
+  <div style={{ display: "grid", gap: 8 }}>
+    <div
+      style={{
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: UI.FONT_MUTED,
+        fontWeight: 900
+      }}
+    >
+      Drip Identity
+    </div>
+
+    <div style={{ fontSize: 28, fontWeight: 900, color: UI.PRIMARY }}>
+      {dripIdentity.emoji} {dripIdentity.label}
+    </div>
+
+    <div style={{ fontSize: UI.FONT_BODY, fontWeight: 900 }}>
+      {dripIdentity.traditional}
+    </div>
+
+    <div style={{ fontSize: UI.FONT_BODY, opacity: 0.9 }}>
+      {dripIdentity.meaning}
+    </div>
+
+{hasFlowAccess && !communityTopSectors.length ? (
+  <div style={{ fontSize: UI.FONT_MUTED, opacity: 0.85 }}>
+    Preview shown until more community Flow data is available.
+  </div>
+) : null}
+
+    {dripEvolution ? (
+      <div
+        style={{
+          marginTop: 8,
+          padding: "0.65rem",
+          borderRadius: UI.RADIUS_SOFT,
+          background: UI.BAND_BG,
+          border: `1px solid ${UI.SOFT_BORDER}`,
+          fontSize: UI.FONT_BODY
+        }}
+      >
+        <b>Evolution:</b> {dripEvolution.text}
+      </div>
+    ) : null}
+  </div>
+</Card>
+
+{latestSnapshot?.alignmentReport ? (
+  <AlignmentReportCard
+    report={latestSnapshot.alignmentReport}
+    hasFlowAccess={hasFlowAccess}
+  />
+) : null}
+
+<InsightCard
+  title={primaryInsightCard.title}
+  narrative={primaryInsightCard.narrative}
+  comparison={primaryInsightCard.comparison}
+  explore={primaryInsightCard.explore}
+  tone={primaryInsightCard.tone}
+  identity={dripIdentity}
+  evolution={dripEvolution}
+/>
+
+{latestSnapshot?.alignmentReport ? (
+  <FlowAlignmentScoreCard
+    report={latestSnapshot.alignmentReport}
+    communityTopSectors={communityTopSectors}
+    hasFlowAccess={hasFlowAccess}
+  />
+) : null}
+
+<TrendTimingCard
+  timing={
+    hasFlowAccess && latestSnapshot?.alignmentReport
+      ? (() => {
+          const flowThemes = Array.isArray(communityTopSectors)
+            ? communityTopSectors
+                .map((x) =>
+                  normalizeThemeName(
+                    x?.label ||
+                      x?.sector ||
+                      x?.category ||
+                      x?.name ||
+                      x ||
+                      ""
+                  )
+                )
+                .filter(Boolean)
+            : [];
+
+          const currentTheme = getSnapshotTopTheme(latestSnapshot);
+
+          const history = Array.isArray(snapshotHistory)
+            ? snapshotHistory
+                .filter((s) => s?.adminStatus !== "excluded")
+                .slice()
+                .sort(
+                  (a, b) =>
+                    getSnapshotDateValue(a) -
+                    getSnapshotDateValue(b)
+                )
+            : [];
+
+          if (!currentTheme || !flowThemes.length || history.length < 2) {
+            return {
+              label: "Developing",
+              tone: "neutral",
+              status: "Building history",
+              narrative:
+                "Sphere has a current signal, but needs more snapshot history before timing your behavior against Flow."
+            };
+          }
+
+          const latestIndex = history.findIndex(
+            (s) => s.id === latestSnapshot.id
+          );
+
+          const currentIndex =
+            latestIndex >= 0 ? latestIndex : history.length - 1;
+
+          const currentOverlapsFlow =
+            flowThemes.includes(currentTheme);
+
+          const firstFlowThemeIndex = history.findIndex((s) =>
+            flowThemes.includes(getSnapshotTopTheme(s))
+          );
+
+          if (
+            firstFlowThemeIndex >= 0 &&
+            firstFlowThemeIndex < currentIndex
+          ) {
+            return {
+              label: "Early Signal",
+              tone: "good",
+              status: "Before Flow",
+              narrative:
+                "A theme now visible in Flow appeared in your earlier snapshots first. Sphere reads this as evidence that you may have moved before the broader community signal became visible."
+            };
+          }
+
+          if (currentOverlapsFlow) {
+            return {
+              label: "In Step",
+              tone: "good",
+              status: "With the crowd",
+              narrative:
+                "Your strongest current move overlaps with Flow. You appear to be moving alongside the broader community."
+            };
+          }
+
+          return {
+            label: "Independent Signal",
+            tone: "neutral",
+            status: "Different from Flow",
+            narrative:
+              "Your strongest current move is not one of Flow's leading themes. Sphere reads this as a distinct pattern that may become more meaningful as more history builds."
+          };
+        })()
+      : null
+  }
+  hasFlowAccess={hasFlowAccess}
+/>
+
+<FlowConfidenceCard
+  communityTopSectors={communityTopSectors}
+  hasFlowAccess={hasFlowAccess}
+/>
+
+{hasFlowAccess ? (
+  <Card>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: UI.FONT_MUTED,
+          fontWeight: 900
+        }}
+      >
+        Flow Identity
+      </div>
+
+      <div style={{ fontSize: 28, fontWeight: 900, color: UI.PRIMARY }}>
+        {flowIdentity.emoji} {flowIdentity.label}
+      </div>
+
+      <div style={{ fontSize: UI.FONT_BODY, fontWeight: 900 }}>
+        {flowIdentity.traditional}
+      </div>
+
+      <div style={{ fontSize: UI.FONT_BODY, opacity: 0.9 }}>
+        {flowIdentity.meaning}
+      </div>
+    </div>
+  </Card>
+) : null}
+
+{hasFlowAccess ? (
+  <FlowMarketAlignmentCard communityTopSectors={communityTopSectors} />
+) : null}
+
+{hasFlowAccess && flowExploreCard ? (
+  <InsightCard
+    eyebrow="Flow Explore"
+    title={flowExploreCard.title}
+    narrative={flowExploreCard.narrative}
+    comparison={flowExploreCard.comparison}
+    explore={flowExploreCard.explore}
+    tone={flowExploreCard.tone}
+    identity={flowIdentity}
+  />
+) : null}
     </div>
   );
 }

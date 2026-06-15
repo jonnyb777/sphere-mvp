@@ -356,22 +356,65 @@ exports.handler = async (event) => {
     const callerUid = await requireAuth(event);
 
     // Gate: Flow access required
-    const caller = await db.collection("users").doc(callerUid).get();
-    const flowAccess = !!(caller.data() || {}).flowAccess;
-    if (!flowAccess) return jsonResponse(403, { error: "Flow access required" });
+const caller = await db.collection("users").doc(callerUid).get();
+const callerData = caller.data() || {};
+
+const adminSnap = await db.collection("admins").doc(callerUid).get();
+const isAdmin = adminSnap.exists;
+
+const flowAccess =
+  isAdmin ||
+  callerData.flowAccess === true ||
+  callerData?.entitlements?.flow?.active === true ||
+  callerData?.entitlements?.flow?.grace === true ||
+  callerData.plan === "flow" ||
+  callerData.plan === "admin";
+
+if (!flowAccess) {
+  return jsonResponse(403, { error: "Flow access required" });
+}
 
     const q = event.queryStringParameters || {};
     const days = Number(q.days || 30);
     const mode = String(q.mode || "trailing");
     const asOf = String(q.asOf || isoDate());
 
-    const win = computeWindow({ days, asOfISO: asOf, mode });
+const win = computeWindow({ days, asOfISO: asOf, mode });
 
-    const users = await getFlowEligibleUsers();
+const forceRefresh =
+  String(q.refresh || q.force || "").toLowerCase() === "1" ||
+  String(q.refresh || q.force || "").toLowerCase() === "true";
+
+const cachedSnapshotSnap = await db
+  .collection("flow_snapshots")
+  .doc(win.windowKey)
+  .get();
+
+if (cachedSnapshotSnap.exists && !forceRefresh) {
+  const cached = cachedSnapshotSnap.data() || {};
+  const updatedAt = cached.updatedAt?.toDate ? cached.updatedAt.toDate() : null;
+  const ageMs = updatedAt ? Date.now() - updatedAt.getTime() : Infinity;
+  const maxCacheAgeMs = 6 * 60 * 60 * 1000;
+
+  if (ageMs < maxCacheAgeMs) {
+    return jsonResponse(200, {
+      ...cached,
+      cache: {
+        hit: true,
+        stale: false,
+        windowKey: win.windowKey,
+        ageMinutes: Math.round(ageMs / 60000)
+      }
+    });
+  }
+}
+
+const users = await getFlowEligibleUsers();
 const eligibleUidSet = new Set(
   users.map((u) => String(u.uid || u.id || "").trim()).filter(Boolean)
 );
 
+// TODO: remove after production verification.
 // MVP/dev safety fallback:
 // If the signed-in caller has Flow access, allow their own eligible uploads to contribute.
 // This prevents Flow from going blank when users/{uid} is missing newer entitlement fields.
@@ -670,26 +713,38 @@ const momentum = {
   topSectors: momentumTopSectors
 };
 
+const snapshotPayload = {
+  monthly,
+  momentum,
+  runners: topRunners,
+  cache: {
+    hit: false,
+    windowKey: win.windowKey
+  },
+  asOf: win.endISO,
+  window: win,
+  meta: {
+    eligibleUsers: eligibleUidSet.size,
+    txCount: seenTx.size,
+    merchantCount: byMerchant.size,
+    sectorCount: bySector.size,
+    debug
+  },
+  updatedAt: admin.firestore.FieldValue.serverTimestamp()
+};
+
+await db
+  .collection("flow_snapshots")
+  .doc(win.windowKey)
+  .set(snapshotPayload, { merge: true });
+
 return {
       statusCode: 200,
       headers: {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store"
       },
-      body: JSON.stringify({
-  monthly,
-  momentum,
-  runners: topRunners,
-  asOf: win.endISO,
-  window: win,
-  meta: {
-  eligibleUsers: eligibleUidSet.size,
-  txCount: seenTx.size,
-  merchantCount: byMerchant.size,
-  sectorCount: bySector.size,
-  debug
-}
-})
+body: JSON.stringify(snapshotPayload)
     };
   } catch (e) {
     console.error("community-flow error:", e);

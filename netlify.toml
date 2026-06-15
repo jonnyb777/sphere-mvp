@@ -4,3 +4,9 @@
 
 [functions."scheduled-market-and-flow-refresh"]
 schedule = "0 11 * * *"
+
+[dev]
+  command = "npm run dev"
+  port = 8888
+  targetPort = 5173
+  framework = "#custom"

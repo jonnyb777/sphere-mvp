@@ -284,6 +284,7 @@ export default function MonthlyFlow({
   });
   const [loading, setLoading] = useState(false);
   const [flowError, setFlowError] = useState("");
+const [flowCacheMeta, setFlowCacheMeta] = useState(null);
 
   const [sectorLeaders, setSectorLeaders] = useState([]);
   const [leadersLoading, setLeadersLoading] = useState(false);
@@ -372,7 +373,11 @@ json = await fetchJsonNetlifyFunction(
           setFlowError(String(e?.message || "Flow feed error"));
         }
 
-        const monthly = json && !Array.isArray(json) ? json.monthly || json : null;
+        setFlowCacheMeta(json?.cache || null);
+
+const monthly = json && !Array.isArray(json)
+  ? json.monthly || json
+  : null;
         setCommunityMonthly({
           topMerchants: Array.isArray(monthly?.topMerchants) ? monthly.topMerchants : [],
           topSectors: Array.isArray(monthly?.topSectors) ? monthly.topSectors : []
@@ -699,23 +704,76 @@ useEffect(() => {
   return (
     <div style={{ lineHeight: 1.45 }}>
       {flowError ? (
-        <div
+  <div
+    style={{
+      marginBottom: "0.9rem",
+      padding: "0.75rem",
+      background: "#fff1f1",
+      border: "1px solid #ffd4d4",
+      borderRadius: UI.RADIUS_SOFT,
+      fontSize: UI.FONT_BODY
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        flexWrap: "wrap"
+      }}
+    >
+      <b>Flow feed error</b>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <Badge tone="bad">Blocked</Badge>
+
+        <button
+          onClick={() => window.location.reload()}
           style={{
-            marginBottom: "0.9rem",
-            padding: "0.75rem",
-            background: "#fff1f1",
-            border: "1px solid #ffd4d4",
-            borderRadius: UI.RADIUS_SOFT,
-            fontSize: UI.FONT_BODY
+            padding: "4px 10px",
+            borderRadius: 999,
+            border: `1px solid ${UI.SOFT_BORDER}`,
+            background: "white",
+            cursor: "pointer",
+            fontWeight: 700
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <b>Flow feed error</b>
-            <Badge tone="bad">Blocked</Badge>
-          </div>
-          <div style={{ marginTop: "0.25rem", fontSize: UI.FONT_BODY, whiteSpace: "pre-wrap" }}>{flowError}</div>
-        </div>
-      ) : null}
+          Retry
+        </button>
+      </div>
+    </div>
+
+    <div
+      style={{
+        marginTop: "0.25rem",
+        fontSize: UI.FONT_BODY,
+        whiteSpace: "pre-wrap"
+      }}
+    >
+      {flowError}
+    </div>
+  </div>
+) : flowCacheMeta ? (
+  <div
+    style={{
+      marginBottom: "0.9rem",
+      padding: "0.6rem 0.75rem",
+      background: UI.BAND_BG,
+      border: `1px solid ${UI.SOFT_BORDER}`,
+      borderRadius: UI.RADIUS_SOFT,
+      fontSize: UI.FONT_MUTED
+    }}
+  >
+    Flow cache:
+    {" "}
+    <b>{flowCacheMeta.hit ? "hit" : "refreshed"}</b>
+
+    {flowCacheMeta.ageMinutes !== undefined
+      ? ` • ${flowCacheMeta.ageMinutes} min old`
+      : ""}
+  </div>
+) : null}
 
       <SubHeaderRow
         title="How Flow works (privacy + credibility)"
@@ -773,7 +831,7 @@ useEffect(() => {
       }}
     />
     <span>
-      Allow my anonymized data to contribute to Flow
+      Allow my anonymized, aggregated activity to contribute to Flow
     </span>
   </label>
 </div>

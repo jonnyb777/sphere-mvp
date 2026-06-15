@@ -19,7 +19,21 @@ function fmtMoney(x) {
 
 function fmtDate(v) {
   try {
+    if (typeof v === "string") {
+      const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        const [, yyyy, mm, dd] = m;
+        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+        return d.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric"
+        });
+      }
+    }
+
     const d = v?.toDate ? v.toDate() : new Date(v);
+
     return d.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
@@ -41,7 +55,7 @@ export default function UploadHistory({ user, onLatestSnapshotChange }) {
 
   const q = query(
     collection(db, "users", user.uid, "insight_snapshots"),
-    orderBy("createdAt", "desc")
+    orderBy("lastUploadedAt", "desc")
   );
 
   const unsub = onSnapshot(
@@ -160,11 +174,21 @@ setStatus("Snapshot excluded from future insights.");
             padding: "1rem"
           }}
         >
-          <div style={{ fontWeight: 800, fontSize: 18 }}>
-            {fmtDate(latest.createdAt)}
-          </div>
+<div style={{ fontWeight: 800, fontSize: 18 }}>
+  Uploaded {fmtDate(latest.lastUploadedAt || latest.updatedAt || latest.createdAt)}
+</div>
 
-          <div style={{ marginTop: 6 }}>
+<div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>
+  {latest.behavioralStart && latest.behavioralAsOf ? (
+  <>Behavior period {fmtDate(latest.behavioralStart)} – {fmtDate(latest.behavioralAsOf)}</>
+) : latest.behavioralAsOf ? (
+  <>Behavior through {fmtDate(latest.behavioralAsOf)}</>
+) : (
+  <>Behavior date unavailable</>
+)}
+</div>
+
+<div style={{ marginTop: 6 }}>
             {latest.uniqueTxCount || 0} transactions analyzed
           </div>
 
@@ -220,7 +244,20 @@ setStatus("Snapshot excluded from future insights.");
               }}
             >
               <div style={{ fontWeight: 700 }}>
-                {fmtDate(s.createdAt)}
+                Uploaded {fmtDate(s.lastUploadedAt || s.updatedAt || s.createdAt)}
+<div style={{ fontSize: 13, opacity: 0.7 }}>
+  {s.behavioralStart && s.behavioralAsOf ? (
+    <>
+      Behavior period {fmtDate(s.behavioralStart)} – {fmtDate(s.behavioralAsOf)}
+    </>
+  ) : s.behavioralAsOf ? (
+    <>
+      Behavior through {fmtDate(s.behavioralAsOf)}
+    </>
+  ) : (
+    <>Behavior date unavailable</>
+  )}
+</div>
               </div>
 
               <div style={{ fontSize: 13, opacity: 0.8 }}>

@@ -152,9 +152,135 @@ function classifyMerchant(merchant = "") {
   }
 
   const h = keywordHeuristics(m);
-  if (h?.sector) return { sector: h.sector, ticker: null, unmapped: h.sector === "Other / Unmapped" };
+  if (h?.sector) {
+    return {
+      sector: h.sector,
+      ticker: null,
+      unmapped: h.sector === "Other / Unmapped"
+    };
+  }
 
   return { sector: "Other / Unmapped", ticker: null, unmapped: true };
+}
+
+function formatSectorLabel(sector = "") {
+  const s = String(sector || "").trim();
+
+  if (/restaurant/i.test(s)) return "Restaurants";
+  if (/travel|transportation/i.test(s)) return "Travel";
+  if (/health|fitness|pharm/i.test(s)) return "Health";
+  if (/apparel|retail|consumer/i.test(s)) return "Retail";
+  if (/technology|subscription|telecom/i.test(s)) return "Digital";
+  if (/grocery|staples/i.test(s)) return "Essentials";
+  if (/financial|insurance/i.test(s)) return "Financial protection";
+  if (/energy|gas/i.test(s)) return "Energy";
+
+  return s || "Other";
+}
+
+function buildAlignmentReport({
+  topSectorsSnapshot = [],
+  priorTopSectors = [],
+  tickersSnapshot = [],
+  totalSpend = 0,
+  uniqueTxCount = 0
+}) {
+  const current = Array.isArray(topSectorsSnapshot) ? topSectorsSnapshot : [];
+  const prior = Array.isArray(priorTopSectors) ? priorTopSectors : [];
+
+  const currentMap = new Map(
+    current.map((x) => [String(x.sector || ""), Number(x.amount || 0)])
+  );
+
+  const priorMap = new Map(
+    prior.map((x) => [String(x.sector || ""), Number(x.amount || 0)])
+  );
+
+  const sectors = Array.from(
+    new Set([...currentMap.keys(), ...priorMap.keys()].filter(Boolean))
+  );
+
+let moves = sectors
+  .map((sector) => {
+    const now = currentMap.get(sector) || 0;
+    const before = priorMap.get(sector) || 0;
+    const delta = now - before;
+
+    return {
+      sector,
+      label: formatSectorLabel(sector),
+      direction: delta >= 0 ? "up" : "down",
+      delta,
+      currentAmount: now,
+      priorAmount: before
+    };
+  })
+  .filter((x) => Math.abs(x.delta) > 0)
+  .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+// If this is the same file or no prior movement is detected,
+// still create a useful report from the strongest current categories.
+if (!moves.length) {
+  moves = current.slice(0, 4).map((x) => ({
+    sector: x.sector,
+    label: formatSectorLabel(x.sector),
+    direction: "up",
+    delta: Number(x.amount || 0),
+    currentAmount: Number(x.amount || 0),
+    priorAmount: 0,
+    stable: true
+  }));
+}
+
+const ups = moves.filter((x) => x.direction === "up").slice(0, 2);
+const downs = moves.filter((x) => x.direction === "down").slice(0, 2);
+
+  const topCurrent = current[0]?.sector || "your top category";
+  const topCurrentLabel = formatSectorLabel(topCurrent);
+
+  const primaryUp = ups[0]?.label || topCurrentLabel;
+  const primaryDown = downs[0]?.label || "other categories";
+
+const hasStableFallback = moves.some((x) => x.stable);
+
+const interpretation = hasStableFallback
+  ? `Consumers like you appear most connected to ${primaryUp.toLowerCase()} behavior in this snapshot. Future uploads will show whether that pattern is rising or fading.`
+  : prior.length
+  ? `Consumers like you appear to be prioritizing ${primaryUp.toLowerCase()} over ${primaryDown.toLowerCase()} in this snapshot.`
+  : `Consumers like you currently appear most connected to ${topCurrentLabel.toLowerCase()} behavior. Future uploads will show whether that pattern is rising or fading.`;
+
+  const companies = Array.from(
+    new Set((Array.isArray(tickersSnapshot) ? tickersSnapshot : []).slice(0, 6))
+  );
+
+  return {
+    version: 1,
+    title: "Consumers Like You",
+    periodLabel: prior.length ? "Compared with your previous upload" : "Current snapshot",
+    moves: [
+      ...ups.map((x) => ({
+        direction: "up",
+        label: x.label,
+        sector: x.sector,
+        delta: Number(x.delta.toFixed(2))
+      })),
+      ...downs.map((x) => ({
+        direction: "down",
+        label: x.label,
+        sector: x.sector,
+        delta: Number(x.delta.toFixed(2))
+      }))
+    ],
+    interpretation,
+    companies,
+    disclaimer: "Informational only. Not investment advice.",
+    proof: {
+      totalSpend: Number(totalSpend || 0),
+      uniqueTxCount: Number(uniqueTxCount || 0),
+      sectorCount: current.length
+    },
+    shareText: `${prior.length ? "Consumers like me shifted" : "Consumers like me are showing"} toward ${primaryUp.toLowerCase()}.`
+  };
 }
 
 // -------------------------
@@ -833,7 +959,7 @@ const topMerchantsSnapshot = Array.from(
   .sort((a, b) => b.amount - a.amount)
   .slice(0, 10);
 
-const topSectorsSnapshot = Array.from(
+const topSectorsRaw = Array.from(
   parsed.reduce((map, x) => {
     const sector = x.sector || "Other / Unmapped";
     const spend = x.amt < 0 ? Math.abs(x.amt) : 0;
@@ -847,9 +973,61 @@ const topSectorsSnapshot = Array.from(
   .sort((a, b) => b.amount - a.amount)
   .slice(0, 5);
 
+const topSectorsTotal = topSectorsRaw.reduce(
+  (sum, s) => sum + Number(s.amount || 0),
+  0
+);
+
+let sectorRunningPct = 0;
+
+const topSectorsSnapshot = topSectorsRaw.map((s, idx) => {
+  const pct = topSectorsTotal
+    ? (Number(s.amount || 0) / topSectorsTotal) * 100
+    : 0;
+
+  const pctRounded =
+    idx === topSectorsRaw.length - 1
+      ? Math.max(0, 100 - sectorRunningPct)
+      : Number(pct.toFixed(1));
+
+  sectorRunningPct += pctRounded;
+
+  return {
+    sector: s.sector,
+    amount: Number(s.amount || 0),
+    pct,
+    pctRounded
+  };
+});
+
 const tickersSnapshot = Array.from(
   new Set(parsed.map((x) => String(x.ticker || "").toUpperCase().trim()).filter(Boolean))
 );
+
+const priorSnapshotSnap = await db
+  .collection("users")
+  .doc(uid)
+  .collection("insight_snapshots")
+  .orderBy("createdAt", "desc")
+  .limit(1)
+  .get();
+
+let priorTopSectors = [];
+
+priorSnapshotSnap.forEach((doc) => {
+  if (doc.id !== batchId) {
+    const data = doc.data() || {};
+    priorTopSectors = Array.isArray(data.topSectors) ? data.topSectors : [];
+  }
+});
+
+const alignmentReport = buildAlignmentReport({
+  topSectorsSnapshot,
+  priorTopSectors,
+  tickersSnapshot,
+  totalSpend: batchStats.totalSpend,
+  uniqueTxCount
+});
 
 await insightSnapshotRef.set(
   {
@@ -859,6 +1037,7 @@ await insightSnapshotRef.set(
     filename,
     createdAt: nowTS(),
     updatedAt: nowTS(),
+    lastUploadedAt: nowTS(),
 
     timeframeDays: windowMeta.days,
     asOfDate: windowMeta.asOf,
@@ -867,11 +1046,17 @@ await insightSnapshotRef.set(
 
     totalSpend: batchStats.totalSpend,
     uniqueTxCount,
-    coverageDays: coverageDaysCount,
+coverageDays: coverageDaysCount,
+behavioralStart: Array.from(coverageDays).sort()[0] || null,
+behavioralAsOf: Array.from(coverageDays).sort().slice(-1)[0] || null,
 
-    topMerchants: topMerchantsSnapshot,
-    topSectors: topSectorsSnapshot,
-    tickers: tickersSnapshot,
+topMerchants: topMerchantsSnapshot,
+topSectors: topSectorsSnapshot,
+priorTopSectors,
+
+alignmentReport,
+
+tickers: tickersSnapshot,
 
     duplicateRisk: {
       exactDupes,

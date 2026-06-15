@@ -308,9 +308,30 @@ function SubTabs({ value, onChange, tabs }) {
   );
 }
 
+function ViewGuide({ title, body, chips = [] }) {
+  return (
+    <Card>
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ fontSize: UI.FONT_HEADER, fontWeight: 900, color: UI.PRIMARY }}>
+          {title}
+        </div>
+        <div style={{ fontSize: UI.FONT_BODY, opacity: 0.9 }}>
+          {body}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {chips.map((chip) => (
+            <Badge key={chip} tone="neutral">{chip}</Badge>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function Home({ user, firebaseUser }) {
 
 const [activeTab, setActiveTab] = useState("dashboard");
+const [dashboardView, setDashboardView] = useState("snapshot");
 const [dripView, setDripView] = useState("personal");
 const [flowView, setFlowView] = useState("community");
 
@@ -373,6 +394,7 @@ const [flowView, setFlowView] = useState("community");
   const [sectorLeaders, setSectorLeaders] = useState([]);
 
   const [latestSnapshot, setLatestSnapshot] = useState(null);
+  const [snapshotHistory, setSnapshotHistory] = useState([]);
 
   useEffect(() => {
   async function loadSnapshotTransactions() {
@@ -410,6 +432,75 @@ const [flowView, setFlowView] = useState("community");
   const [flowTopSectors, setFlowTopSectors] = useState([]);
   const [flowRunners, setFlowRunners] = useState([]); // array of tickers (strings)
   const [flowMerchants, setFlowMerchants] = useState([]); // array of { ticker, sector, signal }
+
+  useEffect(() => {
+  let alive = true;
+
+  async function loadDashboardFlow() {
+    if (!hasFlowAccess) return;
+
+    try {
+      const params = new URLSearchParams({
+        days: String(timeframeDays || 30),
+        asOf: String(asOfDate || ""),
+        mode: String(timeMode || "trailing")
+      });
+
+      const res = await fetch(`/.netlify/functions/community-flow?${params.toString()}`);
+
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      if (!alive) return;
+
+      if (!res.ok) {
+        console.warn("Dashboard Flow load failed:", data);
+        return;
+      }
+
+      const nextTopSectors =
+        data?.topSectors ||
+        data?.communityTopSectors ||
+        data?.sectors ||
+        data?.flow?.topSectors ||
+        [];
+
+      const nextRunners =
+        data?.runners ||
+        data?.topRunners ||
+        data?.communityRunners ||
+        data?.flow?.runners ||
+        [];
+
+      const nextMerchants =
+        data?.topMerchants ||
+        data?.merchants ||
+        data?.communityMerchants ||
+        data?.flow?.merchants ||
+        [];
+
+      setFlowTopSectors(Array.isArray(nextTopSectors) ? nextTopSectors : []);
+      setFlowRunners(
+        Array.isArray(nextRunners)
+          ? nextRunners.map((x) => x?.ticker || x).filter(Boolean)
+          : []
+      );
+      setFlowMerchants(Array.isArray(nextMerchants) ? nextMerchants : []);
+    } catch (e) {
+      console.error("loadDashboardFlow error:", e);
+    }
+  }
+
+  loadDashboardFlow();
+
+  return () => {
+    alive = false;
+  };
+}, [hasFlowAccess, timeframeDays, asOfDate, timeMode]);
 
   // ✅ Tickers "where available" come from classifyMerchant()
   // Spend-only transactions -> merchant -> classify -> ticker
@@ -487,6 +578,90 @@ const [flowView, setFlowView] = useState("community");
     alignmentOverlap
   ]);
 
+  const viewGuide = useMemo(() => {
+ if (activeTab === "dashboard") {
+  return {
+    title: "Sphere Map",
+    body:
+      "Dashboard is your quick read. Drip shows you. Consumer Evolution shows how you are changing. Flow shows the crowd. Flow Alignment shows how you fit. Spherical is the conversation layer.",
+    chips: [
+      "Drip = you",
+      "Drip Compare = you ↔ markets",
+      "Flow = crowd",
+      "Flow Market = crowd ↔ markets",
+      "Flow Compare = you ↔ crowd",
+      "Spherical = conversation"
+    ]
+  };
+}
+
+  if (activeTab === "drip") {
+    if (dripView === "personal") {
+      return {
+        title: "Drip: Your activity",
+        body: "Your personal spending pattern by merchants, sectors, and timeframe.",
+        chips: ["You", "Spending", "Patterns"]
+      };
+    }
+
+    if (dripView === "market") {
+      return {
+        title: "Drip: You → Markets",
+        body: "Your spending behavior mapped into market sectors and ticker context. Informational only.",
+        chips: ["You", "Markets", "Themes"]
+      };
+    }
+
+    return {
+      title: "Drip Compare: You ↔ Market leadership",
+      body: "Your spending-linked tickers compared with market leadership and sector signals.",
+      chips: ["Alignment", "Sectors", "Signals"]
+    };
+  }
+
+  if (activeTab === "flow") {
+    if (flowView === "community") {
+      return {
+        title: "Flow: Crowd activity",
+        body: "Aggregate community spending patterns, top sectors, merchants, and momentum.",
+        chips: ["Crowd", "Aggregate-only", "Momentum"]
+      };
+    }
+
+    if (flowView === "market") {
+      return {
+        title: "Flow: Crowd → Markets",
+        body: "Community behavior mapped into market sectors, ETF proxies, and runners.",
+        chips: ["Crowd", "Markets", "Runners"]
+      };
+    }
+
+    return {
+      title: "Flow Compare: You ↔ Crowd",
+      body: "Your spending and runners compared with community spend and Flow runners.",
+      chips: ["You", "Crowd", "Overlap"]
+    };
+  }
+
+  if (activeTab === "spherical") {
+    return {
+      title: "Spherical: Conversation",
+      body: "Community discussion, posts, questions, and AI-assisted engagement.",
+      chips: ["Feed", "Ripple", "Discussion"]
+    };
+  }
+
+  if (activeTab === "portfolio") {
+  return {
+    title: "Preview: Tools and future intelligence",
+    body: "Paper portfolio, auto-invest preview, and future statistics like volatility, consistency, and standard deviation. Simulations only.",
+    chips: ["Paper portfolio", "Auto-invest preview", "Future stats"]
+  };
+}
+
+  return null;
+}, [activeTab, dripView, flowView]);
+
   const tabs = useMemo(() => {
     const base = [
   { value: "dashboard", label: "Dashboard" },
@@ -494,7 +669,7 @@ const [flowView, setFlowView] = useState("community");
       ...(hasFlowAccess || !simpleMode
         ? [{ value: "flow", label: "Flow", badge: hasFlowAccess ? "Paid" : "Preview" }]
         : []),
-      { value: "portfolio", label: "Portfolio" },
+      { value: "portfolio", label: "Preview" },
       { value: "spherical", label: "Spherical" }
     ];
 
@@ -565,33 +740,70 @@ return (
     />
       <Tabs value={activeTab} onChange={setActiveTab} tabs={tabs} />
 
-        {/* DASHBOARD */}
-        {activeTab === "dashboard" && (
-          <>
-            <Section label="Upload Transactions" storageKey="home:dashboard:upload">
-              <TransactionUploader
-                user={firebaseUser}
-                onUpload={(rows) => {
-                  setTransactions(rows);
-                }}
-              />
+{viewGuide ? (
+  <div style={{ marginTop: "1rem", marginBottom: "1rem" }}>
+    <ViewGuide {...viewGuide} />
+  </div>
+) : null}
 
-              <UploadHistory
+{/* DASHBOARD */}
+{activeTab === "dashboard" && (
+  <>
+    <SubTabs
+      value={dashboardView}
+      onChange={setDashboardView}
+      tabs={[
+        { value: "snapshot", label: "Snapshot" },
+        { value: "upload", label: "Upload" },
+        { value: "history", label: "History" }
+      ]}
+    />
+
+    {dashboardView !== "history" ? (
+      <div style={{ display: "none" }}>
+<UploadHistory
   user={firebaseUser || user}
   onLatestSnapshotChange={setLatestSnapshot}
+  onSnapshotHistoryChange={setSnapshotHistory}
 />
-            </Section>
+      </div>
+    ) : null}
 
-            <Section label="Snapshot" storageKey="home:dashboard:snapshot">
-              <DashboardSnapshot
+    {dashboardView === "snapshot" && (
+      <Section label="Snapshot" storageKey="home:dashboard:snapshot">
+<DashboardSnapshot
   transactions={transactions}
   latestSnapshot={latestSnapshot}
+  snapshotHistory={snapshotHistory}
   hasFlowAccess={hasFlowAccess}
-  communityTopSectors={sectorLeaders}
+  communityTopSectors={flowTopSectors}
 />
-            </Section>
-          </>
-        )}
+      </Section>
+    )}
+
+    {dashboardView === "upload" && (
+      <Section label="Upload Transactions" storageKey="home:dashboard:upload">
+        <TransactionUploader
+          user={firebaseUser}
+          onUpload={(rows) => {
+            setTransactions(rows);
+            setDashboardView("snapshot");
+          }}
+        />
+      </Section>
+    )}
+
+    {dashboardView === "history" && (
+      <Section label="Upload History" storageKey="home:dashboard:history">
+<UploadHistory
+  user={firebaseUser || user}
+  onLatestSnapshotChange={setLatestSnapshot}
+  onSnapshotHistoryChange={setSnapshotHistory}
+/>
+      </Section>
+    )}
+  </>
+)}
 
       {/* DRIP */}
       {activeTab === "drip" && (
